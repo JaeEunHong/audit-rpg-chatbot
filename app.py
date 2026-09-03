@@ -1110,7 +1110,7 @@ portrait_mood = "Checking Records" if processing_turn and record_work else st.se
 left_col, chat_col = st.columns([0.36, 0.64], gap="large", vertical_alignment="top")
 with left_col:
     render_mikael_panel(portrait_mood, interview_started or processing_turn)
-    render_interview_status(st.session_state.current_mood)
+    render_interview_status(st.session_state.current_mood, initial=not interview_started and not processing_turn)
 
 with chat_col:
     st.markdown("<div class='play-area-label'>Interview</div>", unsafe_allow_html=True)
