@@ -53,14 +53,16 @@ def require_app_password() -> None:
         return
 
     st.markdown(
-        '<style>.auth-title{font-size:28px;font-weight:600;margin-bottom:18px;text-align:center;}[data-testid="stForm"]{max-width:480px;margin:0 auto;}[data-testid="stFormSubmitButton"] button{background:#3F5F6F !important;border-color:#3F5F6F !important;color:#FFFFFF !important;}[data-testid="stFormSubmitButton"] button:hover{background:#304B58 !important;border-color:#304B58 !important;}</style>',
+        '<style>.auth-title{font-size:28px;font-weight:600;margin-bottom:18px;text-align:center;}[data-testid="stForm"]{width:100%;max-width:480px;margin:0 auto;box-sizing:border-box;border:1px solid #D9D6CE;border-radius:12px;padding:18px 18px 16px;background:#F7F5F0;}[data-testid="stFormSubmitButton"] button{background:#3F5F6F !important;border-color:#3F5F6F !important;color:#FFFFFF !important;}[data-testid="stFormSubmitButton"] button:hover{background:#304B58 !important;border-color:#304B58 !important;}</style>',
 
         unsafe_allow_html=True,
     )
-    st.markdown("<div class='auth-title'>Audit interview</div>", unsafe_allow_html=True)
-    with st.form("app_password_form"):
-        entered = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Enter", type="primary", use_container_width=True)
+    _auth_left, auth_center, _auth_right = st.columns([1, 1, 1])
+    with auth_center:
+        st.markdown("<div class='auth-title'>Audit interview</div>", unsafe_allow_html=True)
+        with st.form("app_password_form"):
+            entered = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Enter", type="primary", use_container_width=True)
     if submitted:
         if entered == expected:
             st.session_state.authenticated = True
@@ -69,8 +71,10 @@ def require_app_password() -> None:
     st.stop()
 
 
+require_app_password()
+
 ASSET_DIR = ROOT / "assets"
-MIKAEL_DEFAULT_IMAGE = ASSET_DIR / "mikael_default.png"
+MIKAEL_DEFAULT_IMAGE = ASSET_DIR / "Confident.png"
 AUDITOR_AVATAR = str(ASSET_DIR / "auditor_profile.png")
 MIKAEL_AVATAR = str(ASSET_DIR / "mikael_profile.png")
 MIKAEL_MOOD_IMAGES = {
@@ -718,8 +722,6 @@ body,
 
 
 
-
-require_app_password()
 
 def chat_avatar(role: str) -> str:
     return AUDITOR_AVATAR if role == "user" else MIKAEL_AVATAR
