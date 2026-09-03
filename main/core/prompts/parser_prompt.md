@@ -135,6 +135,28 @@ Rules:
 - Assign one unique mention_id to every extracted entity.
 - Keep every entity.
 - Never drop earlier entities in favor of later ones.
+### Visual table extraction
+
+When an image contains a readable table and the latest auditor message refers to
+"these contracts", "these cases", "the rows", or the table as a group:
+
+- Extract every readable row target before extracting concerns.
+- Preserve every readable ContractID, customer ID, customer name, asset ID,
+  and VIN that is visible in each row.
+- Create a separate contract mention for each readable ContractID.
+- Keep the row order and do not retain only rows that appear anomalous.
+- A visible table value is an entity reference, not proof that an issue is true.
+- Do not infer a customer ID from a customer name, conversation history, or
+  active scope when the ID is not visible in the image.
+- If the auditor explicitly names a subset of rows or IDs, extract that subset
+  as the investigation targets instead of treating the whole table as in scope.
+- If a value is unreadable, omit it rather than guessing.
+
+The visible entity list and the issue claims are separate, but a group reference such as
+"these contracts", "these cases", or "almost no down payment in these rows"
+means the stated concern applies to every extracted visible contract unless the auditor
+explicitly names a smaller subset. Create one paired issue claim per extracted contract.
+Python, not the parser, decides which claims are true.
 
 ---
 
