@@ -9,12 +9,13 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import streamlit as st
-
-from audit_rpg import DATA_PATH, DEFAULT_MODEL, ENTITY_MASTER_PATH, active_refs_after_turn, extract_mood, get_scorecard, image_to_data_url, interview_state_for_mood, load_case_data, load_env, should_require_tool, small_talk_reply
 CORE_DIR = ROOT / "main" / "core"
 if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
+
+import streamlit as st
+
+from audit_rpg import DATA_PATH, DEFAULT_MODEL, ENTITY_MASTER_PATH, active_refs_after_turn, extract_mood, get_scorecard, image_to_data_url, interview_state_for_mood, load_case_data, load_env, should_require_tool, small_talk_reply
 from run_experiment import run_investigation
 
 
