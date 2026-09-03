@@ -8,3 +8,6 @@ __pycache__/
 *.log
 audit_rpg.py.recovery_backup
 outputs/
+
+# Local experiments are not deployed
+/exp/
