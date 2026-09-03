@@ -53,10 +53,10 @@ def require_app_password() -> None:
         return
 
     st.markdown(
-        "<style>.auth-title{font-size:28px;font-weight:600;margin-bottom:18px;}</style>",
+        "<style>.auth-title{font-size:28px;font-weight:600;margin-bottom:18px;text-align:center;}[data-testid="stFormSubmitButton"] button{background:#3F5F6F !important;border-color:#3F5F6F !important;color:#FFFFFF !important;}[data-testid="stFormSubmitButton"] button:hover{background:#304B58 !important;border-color:#304B58 !important;}</style>",
         unsafe_allow_html=True,
     )
-    _, auth_col, _ = st.columns([1, 0.55, 1])
+    _, auth_col, _ = st.columns([1, 0.38, 1])
     with auth_col:
         st.markdown("<div class='auth-title'>Audit interview</div>", unsafe_allow_html=True)
         with st.form("app_password_form"):
