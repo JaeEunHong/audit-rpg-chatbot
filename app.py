@@ -49,21 +49,25 @@ def require_app_password() -> None:
     if not expected:
         st.error("APP_PASSWORD is not configured.")
         st.stop()
-
     if st.session_state.get("authenticated", False):
         return
 
-    st.title("Audit interview")
-    entered = st.text_input("Password", type="password")
-    if st.button("Enter", type="primary"):
-        if entered == expected:
-            st.session_state.authenticated = True
-            st.rerun()
-        st.error("Incorrect password.")
+    st.markdown(
+        "<style>.auth-title{font-size:28px;font-weight:600;margin-bottom:18px;}</style>",
+        unsafe_allow_html=True,
+    )
+    _, auth_col, _ = st.columns([1, 0.55, 1])
+    with auth_col:
+        st.markdown("<div class='auth-title'>Audit interview</div>", unsafe_allow_html=True)
+        with st.form("app_password_form"):
+            entered = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Enter", type="primary", use_container_width=True)
+        if submitted:
+            if entered == expected:
+                st.session_state.authenticated = True
+                st.rerun()
+            st.error("Incorrect password.")
     st.stop()
-
-
-require_app_password()
 
 
 ASSET_DIR = ROOT / "assets"
@@ -712,6 +716,8 @@ body,
 
 
 
+
+require_app_password()
 
 def chat_avatar(role: str) -> str:
     return AUDITOR_AVATAR if role == "user" else MIKAEL_AVATAR
