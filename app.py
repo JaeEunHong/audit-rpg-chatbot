@@ -43,6 +43,27 @@ st.set_page_config(page_title="Nordovia Audit RPG", page_icon=":material/search:
 
 load_env()
 
+def require_app_password() -> None:
+    expected = os.getenv("APP_PASSWORD", "")
+    if not expected:
+        st.error("APP_PASSWORD is not configured.")
+        st.stop()
+
+    if st.session_state.get("authenticated", False):
+        return
+
+    st.title("Audit interview")
+    entered = st.text_input("Password", type="password")
+    if st.button("Enter", type="primary"):
+        if entered == expected:
+            st.session_state.authenticated = True
+            st.rerun()
+        st.error("Incorrect password.")
+    st.stop()
+
+
+require_app_password()
+
 
 ASSET_DIR = ROOT / "assets"
 MIKAEL_DEFAULT_IMAGE = ASSET_DIR / "mikael_default.png"
