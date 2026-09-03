@@ -38,7 +38,7 @@ ENTITY_MASTER_PATH = existing_case_path(
     Path("data/entity_master.parquet"),
     Path("outputs/nordovia_real_data/entity_master.parquet"),
 )
-PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 MODEL_ENV_VAR = "AUDIT_RPG_MODEL"
 DEFAULT_MODEL = "gpt-5-mini"
 MAX_TOOL_CALLS = 4
@@ -2026,10 +2026,10 @@ def load_prompt_text(filename: str) -> str:
     return (PROMPTS_DIR / filename).read_text(encoding="utf-8").strip()
 
 
-MIKAEL_INSTRUCTIONS = load_prompt_text("mikael_instructions.md")
-MIKAEL_RESPONSE_STYLE = load_prompt_text("mikael_response_style.md")
-MIKAEL_FINAL_RESPONSE = load_prompt_text("mikael_final_response.md")
-ISSUE_LANGUAGE_GUIDE = load_prompt_text("issue_language_guide.md")
+MIKAEL_INSTRUCTIONS = ""
+MIKAEL_RESPONSE_STYLE = ""
+MIKAEL_FINAL_RESPONSE = ""
+ISSUE_LANGUAGE_GUIDE = ""
 
 
 def build_runtime_issue_catalog(case_data: dict[str, Any]) -> str:

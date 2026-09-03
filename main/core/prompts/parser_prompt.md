@@ -183,16 +183,9 @@ SE110459 has passenger vehicle to finance issue and interest is too low issue
 
 Output:
 
-(SE105191, passenger_vehicle_to_finance)
-(SE105191, interest_too_low)
+Create one issue claim for each explicit entity and concern pairing stated by the auditor. Do not apply every concern to every entity unless the auditor clearly says the concerns apply to all of them.
 
-(SE107270, passenger_vehicle_to_finance)
-(SE107270, interest_too_low)
-
-(SE110459, passenger_vehicle_to_finance)
-(SE110459, interest_too_low)
-
-If N entities share M concerns, produce exactly N × M issue_claims.
+Do not create an automatic entity-by-issue cross-product. Preserve the pairing stated by the auditor. If one concern clearly applies to several named entities, create one claim per named entity. If a concern is attached to one entity, attach it only to that entity. If a customer is said to have a concern that may require contract examples, preserve the claim on the customer mention; the Python layer will decide whether it is customer-scoped or needs specific contract examples.
 
 ---
 
@@ -201,9 +194,12 @@ If N entities share M concerns, produce exactly N × M issue_claims.
 Before returning the JSON:
 
 - Every explicit entity MUST appear in `entity_mentions`.
-- Every explicit entity + concern pair MUST appear in `issue_claims`.
-- `expected_issue_claims = (number of applicable entities) × (number of applicable concerns)`.
-- If fewer `issue_claims` are produced, regenerate the output.
+- Every distinct concern stated by the auditor MUST appear in `issue_claims`.
+- Every explicit entity-specific pairing MUST appear in `issue_claims`.
+- Do not omit a secondary concern because another concern on the same turn is easier to classify.
+- Do not invent pairings that the auditor did not state.
+- Preserve customer-level claims even when the concern may later be rejected or narrowed by the Python business layer.
+- If a concern has no clear entity, leave the claim unresolved rather than attaching it to an unrelated entity.
 - If there is no concrete record or customer together with an observed concern, return:
 
 ```json
@@ -224,3 +220,9 @@ Before returning the JSON:
 - Do NOT disclose confidential information.
 - Return ONLY the requested JSON schema.
 When the latest message uses an ordinal reference such as "the first contract", "the second one", or "the last contract", resolve it to the exact contract ID previously listed for the active customer or investigation. Emit that exact ID as the entity text; never emit the ordinal phrase as a record ID. If no unique listed contract matches, leave the entity unresolved and let the runtime clarify.
+
+A prior public lookup or factual question is not an audit concern. For a vague follow-up such as "What happened there?", create an issue claim only if the visible dialogue contains an explicit earlier auditor concern for the same entity. Never derive a new issue claim from a date, rate, status, asset fact, or other public record detail alone.
+
+A meta-response such as "we already covered those findings", "that is already discussed", or "move on" is not a lookup. Do not create a new issue claim and set requested_content to null so the runtime returns a brief clarification or acknowledgement rather than an overview.
+
+Preserve every distinct concern stated in the latest auditor message as a separate issue_claim, even when the entity is a customer and the concern may later require contract examples. Do not drop pricing, approval, asset, rate, collateral, or other contract-level concerns merely because the customer has multiple contracts. The Python business layer decides whether the claim is customer-scoped, contract-scoped, unsupported, or needs clarification.

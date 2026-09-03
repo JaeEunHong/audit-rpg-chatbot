@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from shared.audit_rpg import (  # noqa: E402
+from audit_rpg import (  # noqa: E402
     DEFAULT_MODEL,
     build_spoken_identification,
     get_openai_client,
@@ -25,7 +25,7 @@ from shared.audit_rpg import (  # noqa: E402
     response_text,
     update_score,
 )
-from shared.audit_types import AuditRequest, ResponseContext  # noqa: E402
+from audit_types import AuditRequest, ResponseContext  # noqa: E402
 
 
 MAX_RECORDS = 5
@@ -169,7 +169,7 @@ def parse_investigation_request(
             "required": ["entity_mentions", "requested_access", "requested_content", "issue_claims", "follow_active_context", "small_talk", "context_action"],
         },
     }
-    prompt = (Path(__file__).with_name("parser_prompt.md").read_text(encoding="utf-8")
+    prompt = ((Path(__file__).parent / "prompts" / "parser_prompt.md").read_text(encoding="utf-8")
               + "\n\nRuntime issue catalog:\n"
               + case_data.get("issue_catalog_text", "\n".join(f"- {x}" for x in case_data["issue_columns"])))
     response = client.responses.create(
@@ -393,7 +393,7 @@ def verify_investigation_request(
             "score_result": {},
             "approved_material": {},
         }
-    if not request.issue_claims and request.requested_content in {"overview", "identity", "asset_details", "vin", "date", "interest_rate", "exposure", "approval"}:
+    if not request.issue_claims and (request.requested_content in {"overview", "identity", "asset_details", "vin", "date", "interest_rate", "exposure", "approval"} or (request.requested_content is None and request.context_action in {"merge", "replace"})):
         lookup_records = []
         for targets in resolved.values():
             for target in targets:
@@ -609,7 +609,7 @@ def generate_mikael_response(
 ) -> str:
     load_env()
     client = get_openai_client()
-    prompt = Path(__file__).with_name("generator_prompt.md").read_text(encoding="utf-8")
+    prompt = (Path(__file__).parent / "prompts" / "generator_prompt.md").read_text(encoding="utf-8")
     context_payload = {
         key: value
         for key, value in context.__dict__.items()
@@ -702,6 +702,18 @@ def run_investigation(
         case_data,
         active_investigation_scope,
     )
+    explicit_refs = normalize_ref_list(
+        case_data,
+        resolve_record_references_from_text(case_data, message).get("refs", []),
+    )
+    active_targets = active_scope_records(case_data, updated_scope)
+    if (
+        request.follow_active_context
+        and not explicit_refs
+        and len(active_targets) > 1
+        and request.requested_content == "explanation"
+    ):
+        request.issue_claims = []
     result = (
         {"status": "small_talk", "records": [], "score_result": {}, "approved_material": {}, "clarification": None}
         if request.small_talk and not request.issue_claims and not request.requested_content
