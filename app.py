@@ -539,6 +539,12 @@ body,
     height: 2px !important;
     background: var(--audit-accent) !important;
 }
+[data-baseweb="tab-highlight"] {
+    background: var(--audit-accent) !important;
+}
+[data-baseweb="tab-border"] {
+    background: var(--audit-line) !important;
+}
 .sidebar-summary {
     font-size: 12.5px;
     font-weight: 400;
