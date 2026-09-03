@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -28,11 +30,27 @@ from audit_rpg import (  # noqa: E402
 from audit_types import AuditRequest, ResponseContext  # noqa: E402
 
 
+def zoom_table_id_image(data_url: str) -> str | None:
+    """Create a readable crop of the left table columns for row-ID extraction."""
+    try:
+        from PIL import Image
+
+        _header, encoded = data_url.split(",", 1)
+        image = Image.open(BytesIO(base64.b64decode(encoded)))
+        crop_width = max(320, int(image.width * 0.42))
+        crop = image.crop((0, 0, min(crop_width, image.width), image.height))
+        crop = crop.resize((crop.width * 2, crop.height * 2))
+        output = BytesIO()
+        crop.save(output, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+    except Exception:
+        return None
 MAX_RECORDS = 5
 MAX_SHARED_ISSUE_BATCH_RECORDS = 50
 MAX_CLAIMS = 10
 MAX_FINDINGS_FOR_FULL_CONTEXT = 30
 PARSER_MODEL = "gpt-4.1"
+VISUAL_MODEL = "gpt-5.6"
 GENERATOR_MODEL = "gpt-4.1-mini"
 CUSTOMER_SCOPED_ISSUES = {
     "AML RISK",
@@ -76,7 +94,11 @@ def format_previous_visible_dialogue(
             continue
         label = "Auditor" if role == "user" else "Mikael (Auditee)"
         if has_image:
-            text = f"{text}\n<Image attached>" if text else "<Image attached>"
+            text = f"{text}" + chr(10) + "<Image attached>" if text else "<Image attached>"
+        visual_text = str(item.get("visual_extraction_text") or "").strip()
+        if visual_text:
+            prefix = f"{text}" + chr(10) if text else ""
+            text = prefix + "Visual extraction table - [screenshot attached]:" + chr(10) + visual_text
         visible.append(f"{label}: {text}")
     return "\n".join(visible[-max_messages:])
 
@@ -97,6 +119,64 @@ def build_identifier_only_scope(
     return scope
 
 
+def pre_extracted_entities_from_visual_table(
+    case_data: dict[str, Any],
+    table_text: str,
+) -> list[dict[str, str]]:
+    lines = [
+        line.strip()
+        for line in str(table_text or "").splitlines()
+        if line.strip().startswith("|")
+    ]
+    header_index = next(
+        (index for index, line in enumerate(lines) if "contractid" in line.lower()),
+        None,
+    )
+    if header_index is None:
+        return []
+
+    headers = [
+        cell.strip().lower().replace(" ", "").replace("_", "")
+        for cell in lines[header_index].strip("|").split("|")
+    ]
+    entities: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_entity(kind: str, value: str) -> None:
+        value = value.strip()
+        if not value or value in {"-", "—"}:
+            return
+        key = (kind, value)
+        if key in seen:
+            return
+        seen.add(key)
+        entities.append({
+            "mention_id": f"e{len(entities) + 1}",
+            "kind": kind,
+            "text": value,
+        })
+
+    for line in lines[header_index + 1:]:
+        values = [cell.strip() for cell in line.strip("|").split("|")]
+        if values and all(not value.replace("-", "").replace(":", "").strip() for value in values):
+            continue
+        row = dict(zip(headers, values))
+        for ref in normalize_ref_list(case_data, [row.get("contractid", "")]):
+            if ref in case_data.get("contracts", {}):
+                add_entity("contract", ref)
+        for ref in normalize_ref_list(case_data, [row.get("customerid", "")]):
+            if ref in case_data.get("customers", {}):
+                add_entity("customer", ref)
+        for ref in normalize_ref_list(case_data, [row.get("assetid", "")]):
+            if ref in case_data.get("asset_to_contract", {}):
+                add_entity("asset", ref)
+        vin = row.get("vin", "").replace(" ", "").replace("-", "").replace("_", "").upper()
+        if vin in case_data.get("vin_to_contract", {}):
+            add_entity("vin", vin)
+        add_entity("name", row.get("customername", ""))
+
+    return entities
+
 def parse_investigation_request(
     message: str,
     case_data: dict[str, Any],
@@ -105,7 +185,7 @@ def parse_investigation_request(
     image_data_urls: list[str] | None = None,
     chat_history: list[dict[str, Any]] | None = None,
     active_investigation_scope: dict[str, list[str]] | None = None,
-) -> AuditRequest:
+    visual_text_out: list[str] | None = None) -> AuditRequest:
     load_env()
     client = get_openai_client()
     image_urls = []
@@ -130,7 +210,56 @@ def parse_investigation_request(
             ),
         },
     ]
-    content.extend({"type": "input_image", "image_url": url} for url in image_urls)
+    visual_entity_text = ""
+    if image_urls:
+        visual_prompt = """
+You are a visual entity extractor for an audit table.
+Read the entire attached image and return plain text only.
+Extract every readable row from top to bottom. Do not filter rows by the auditor's issue.
+For each row, preserve the exact visible ContractID and include customer ID, customer name,
+Use ContractID for values beginning with SE and six digits, CustomerID for CUST plus four digits,
+AssetID for AST plus six digits, VIN for a VIN-like 17-character alphanumeric value, and CustomerName
+for company or legal-entity names such as Lund Enterprises or Alder & Brisk Freight.
+asset ID, and VIN when readable. Do not infer missing values. Do not classify issues,
+score records, summarize the table, or omit rows after the first few.
+Return one Markdown table in top-to-bottom order. Use one row for every visible table row:
+| # | ContractID | CustomerID | CustomerName | AssetID | VIN |
+|---:|---|---|---|---|---|
+Use blank cells when a value is unreadable. Never invent values.
+"""
+        visual_content: list[dict[str, Any]] = [
+            {"type": "input_text", "text": "Extract all visible table entities."},
+        ]
+        visual_content.extend({"type": "input_image", "image_url": url, "detail": "high"} for url in image_urls)
+        for url in image_urls:
+            zoomed_url = zoom_table_id_image(url)
+            if zoomed_url:
+                visual_content.append({
+                    "type": "input_text",
+                    "text": "This is a zoomed table crop. Read every visible ContractID row; do not filter by issue.",
+                })
+                visual_content.append({"type": "input_image", "image_url": zoomed_url, "detail": "high"})
+        visual_response = client.responses.create(
+            model=VISUAL_MODEL,
+            instructions=visual_prompt,
+            input=[{"role": "user", "content": visual_content}],
+            max_output_tokens=6000,
+            reasoning={"effort": "none"},
+        )
+        visual_entity_text = response_text(visual_response).strip()
+        if not visual_entity_text:
+            raise RuntimeError("Visual entity extractor returned no output.")
+        content.append({
+            "type": "input_text",
+            "text": "Visual extraction table - [screenshot attached]:\n" + visual_entity_text,
+        })
+        pre_entities = pre_extracted_entities_from_visual_table(case_data, visual_entity_text)
+        content.append({
+            "type": "input_text",
+            "text": "Python-validated pre-extracted entities. Preserve every item and mention_id exactly:" + json.dumps(pre_entities, ensure_ascii=False),
+        })
+        if visual_text_out is not None:
+            visual_text_out.append(visual_entity_text)
     schema = {
         "type": "json_schema",
         "name": "audit_request",
@@ -174,7 +303,7 @@ def parse_investigation_request(
         instructions=prompt,
         input=[{"role": "user", "content": content}],
         text={"format": schema},
-        max_output_tokens=5000,
+        max_output_tokens=10000,
     )
     raw = response_text(response)
     if not raw:
@@ -511,7 +640,7 @@ def verify_investigation_request(
                 "issue_type": score.get("issue_type"),
                 "score_summary": score.get("score_summary", {}),
                 "score_delta": score.get("score_delta", 0),
-                "findings": score.get("findings", [])[:5],
+                "findings": score.get("findings", []),
             },
             "approved_material": {},
         }
@@ -520,7 +649,6 @@ def verify_investigation_request(
         material = finding.get("issue_material")
         if finding.get("status") in {"new_score", "repeat"} and material:
             approved.append({
-                "record_id": finding.get("record_id"),
                 "issue_type": finding.get("issue_type"),
                 "why_it_violates_policy": material.get("why_it_violates_policy", ""),
                 "explanation_given_to_auditor": material.get("explanation_given_to_auditor", ""),
@@ -535,6 +663,21 @@ def verify_investigation_request(
         summary["count"] += 1
         if len(summary["sample_record_ids"]) < 5:
             summary["sample_record_ids"].append(finding["record_id"])
+    verified_count = sum(
+        1 for finding in finding_rows if finding["status"] in {"new_score", "repeat"}
+    )
+    not_verified_count = len(finding_rows) - verified_count
+    if verified_count and not_verified_count:
+        verification_classification = "mixed"
+    elif verified_count:
+        verification_classification = "all_verified"
+    else:
+        verification_classification = "none_verified"
+    claim_outcome = {
+        "classification": verification_classification,
+        "verified_count": verified_count,
+        "not_verified_count": not_verified_count,
+    }
     if len(approved) <= MAX_FINDINGS_FOR_FULL_CONTEXT:
         approved_material = {"findings": approved} if approved else {}
     else:
@@ -556,8 +699,9 @@ def verify_investigation_request(
             "issue_type": score.get("issue_type"),
             "score_summary": score.get("score_summary", {}),
             "score_delta": score.get("score_delta", 0),
-            "findings": finding_rows[:5],
+            "findings": finding_rows,
             "finding_summary": finding_summary,
+            "claim_outcome": claim_outcome,
         },
         "approved_material": approved_material,
     }
@@ -588,12 +732,19 @@ def build_response_context(result: dict[str, Any]) -> ResponseContext:
         if response_mode in {"lookup", "unsupported"}:
             item["public_narrative"] = record.get("public_narrative", "")
         records.append(item)
+    raw_score_result = result.get("score_result", {})
+    score_result = {
+        key: raw_score_result[key]
+        for key in ("status", "issue_type", "score_delta", "claim_outcome")
+        if key in raw_score_result
+    }
+    context_records = records if response_mode in {"lookup", "unsupported"} else []
     return ResponseContext(
         response_mode=response_mode,
         requested_content=result.get("requested_content") if response_mode == "lookup" else None,
-        records=records,
+        records=context_records,
         public_material={},
-        score_result=result.get("score_result", {}),
+        score_result=score_result,
         approved_material=result.get("approved_material", {}),
         clarification=result.get("clarification"),
     )
@@ -603,7 +754,7 @@ def generate_mikael_response(
     model: str,
     chat_history: list[dict[str, Any]] | None = None,
     latest_message: str | None = None,
-) -> str:
+    visual_entity_text: str = "") -> str:
     load_env()
     client = get_openai_client()
     prompt = (Path(__file__).parent / "prompts" / "generator_prompt.md").read_text(encoding="utf-8")
@@ -624,11 +775,14 @@ def generate_mikael_response(
         "small_talk": "Annoyed / Dismissive",
     }
     prompt += "\n\nRequired mood: [MOOD:" + mood_by_mode.get(context.response_mode, "Professional / Controlled") + "]"
+    latest_input = latest_message or "(not provided)"
+    if visual_entity_text:
+        latest_input += "\n<Image attached>\nVisual extraction table - [screenshot attached]:\n" + visual_entity_text
     response = client.responses.create(
         model=GENERATOR_MODEL,
         instructions=prompt,
         input=[{"role": "user", "content": [
-            {"type": "input_text", "text": "Latest auditor message: " + (latest_message or "(not provided)")},
+            {"type": "input_text", "text": "Latest auditor message: " + latest_input},
             {
                 "type": "input_text",
                 "text": "Recent dialogue for conversational continuity only:\\n"
@@ -685,6 +839,7 @@ def run_investigation(
     active_investigation_scope: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    visual_text_parts: list[str] = []
     request = parse_investigation_request(
         message,
         case_data,
@@ -693,12 +848,28 @@ def run_investigation(
         image_data_urls,
         chat_history,
         active_investigation_scope,
+        visual_text_parts,
     )
     updated_scope = apply_context_action_to_scope(
         request,
         case_data,
         active_investigation_scope,
     )
+    if visual_text_parts:
+        visual_resolution = resolve_record_references_from_text(
+            case_data,
+            "\n\n".join(visual_text_parts),
+        )
+        visual_scope = {
+            "contracts": list(visual_resolution.get("contracts", [])),
+            "customers": list(visual_resolution.get("customers", [])),
+            "assets": [],
+            "vins": [],
+        }
+        for kind in ("contracts", "customers"):
+            for ref in visual_scope[kind]:
+                if ref not in updated_scope[kind]:
+                    updated_scope[kind].append(ref)
     explicit_refs = normalize_ref_list(
         case_data,
         resolve_record_references_from_text(case_data, message).get("refs", []),
@@ -717,8 +888,9 @@ def run_investigation(
         else verify_investigation_request(request, case_data, ledger, message, updated_scope)
     )
     result["active_investigation_scope"] = updated_scope
+    result["visual_extraction_text"] = "\n\n".join(visual_text_parts).strip()
     context = build_response_context(result)
-    reply = generate_mikael_response(context, model, chat_history, message)
+    reply = generate_mikael_response(context, model, chat_history, message, "\\n\\n".join(visual_text_parts))
     result["request"] = request.__dict__
     result["response_context"] = context.__dict__
     result["reply"] = reply
