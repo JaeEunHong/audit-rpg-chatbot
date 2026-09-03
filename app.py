@@ -538,7 +538,10 @@ body,
 [data-testid="stSidebar"] [aria-selected="true"] p {
     color: var(--audit-text) !important;
 }
-[data-testid="stSidebar"] [data-baseweb="tab-highlight"] {
+[data-testid="stSidebar"] [data-baseweb="tab"][aria-selected="true"] {
+    border-bottom-color: var(--audit-accent) !important;
+}
+[data-baseweb="tab-highlight"] {
     height: 2px !important;
     background: var(--audit-accent) !important;
 }
