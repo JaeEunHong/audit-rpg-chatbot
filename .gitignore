@@ -1,0 +1,10 @@
+﻿.env
+.env.*
+!.env.example
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.log
+audit_rpg.py.recovery_backup
+outputs/
