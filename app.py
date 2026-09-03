@@ -736,7 +736,7 @@ def render_mikael_panel(mood: str, interview_started: bool) -> None:
         unsafe_allow_html=True,
     )
 
-def render_interview_status(mood: str) -> None:
+def render_interview_status(mood: str, initial: bool = False) -> None:
     status = interview_state_for_mood(mood)
     st.markdown(
         (
