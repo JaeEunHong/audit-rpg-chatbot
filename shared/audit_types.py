@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
@@ -13,15 +13,6 @@ class AuditRequest:
     follow_active_context: bool
     small_talk: bool
     context_action: str = "follow"
-
-
-@dataclass
-class ResolutionResult:
-    resolved_records: list[dict[str, Any]]
-    active_record: dict[str, Any] | None
-    expanded_contracts: list[dict[str, Any]]
-    ambiguities: list[str]
-    missing_refs: list[str]
 
 
 @dataclass

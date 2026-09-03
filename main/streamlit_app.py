@@ -12,9 +12,33 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 
 from shared.audit_rpg import DATA_PATH, DEFAULT_MODEL, ENTITY_MASTER_PATH, active_refs_after_turn, extract_mood, get_scorecard, image_to_data_url, interview_state_for_mood, load_case_data, load_env, should_require_tool, small_talk_reply
-from runtime_switch import run_agent_turn
+MAIN_DIR = Path(__file__).resolve().parent
+if str(MAIN_DIR) not in sys.path:
+    sys.path.insert(0, str(MAIN_DIR))
+from simplified_exp.run_experiment import run_investigation
 
 
+def run_agent_turn(
+    messages, score_ledger, data, model=None, active_refs=None,
+    active_investigation_scope=None,
+):
+    latest_user = next((item for item in reversed(messages) if item.get("role") == "user"), {})
+    result = run_investigation(
+        str(latest_user.get("content") or ""),
+        data,
+        score_ledger,
+        model or os.getenv("AUDIT_RPG_MODEL", "gpt-4.1"),
+        image_data_urls=list(latest_user.get("images") or []),
+        chat_history=messages,
+        active_investigation_scope=active_investigation_scope,
+    )
+    events = []
+    if result.get("status") == "lookup":
+        events.append({"tool": "find_records", "output": {"status": "lookup", "records": result.get("records", [])}})
+    score_result = result.get("score_result") or {}
+    if score_result.get("findings"):
+        events.append({"tool": "update_score", "output": score_result})
+    return result["reply"], events, result.get("active_investigation_scope", active_investigation_scope)
 st.set_page_config(page_title="Nordovia Audit RPG", page_icon=":material/search:", layout="wide", initial_sidebar_state="collapsed")
 
 load_env()
