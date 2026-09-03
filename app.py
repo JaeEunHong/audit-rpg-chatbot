@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -16,7 +17,8 @@ if str(CORE_DIR) not in sys.path:
 import streamlit as st
 
 from audit_rpg import DATA_PATH, DEFAULT_MODEL, ENTITY_MASTER_PATH, active_refs_after_turn, extract_mood, get_scorecard, image_to_data_url, interview_state_for_mood, load_case_data, load_env, should_require_tool, small_talk_reply
-from run_experiment import run_investigation
+from run_experiment import contracts_for_customer, run_investigation
+
 
 
 def run_agent_turn(
@@ -33,14 +35,22 @@ def run_agent_turn(
         chat_history=messages,
         active_investigation_scope=active_investigation_scope,
     )
+    visual_text = str(result.get("visual_extraction_text") or "").strip()
+    if visual_text and latest_user is not None:
+        latest_user["visual_extraction_text"] = visual_text
     events = []
+    if visual_text:
+        events.append({"tool": "visual_parser", "output": {"markdown_table": visual_text}})
+    if result.get("request"):
+        events.append({"tool": "llm1_parser", "output": result["request"]})
     if result.get("status") == "lookup":
         events.append({"tool": "find_records", "output": {"status": "lookup", "records": result.get("records", [])}})
     score_result = result.get("score_result") or {}
     if score_result.get("findings"):
         events.append({"tool": "update_score", "output": score_result})
+    events.append({"tool": "llm2_generator", "output": {"reply": result["reply"]}})
     return result["reply"], events, result.get("active_investigation_scope", active_investigation_scope)
-st.set_page_config(page_title="Nordovia Audit RPG", page_icon=":material/search:", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Nordovia Audit RPG", page_icon=":material/search:", layout="wide", initial_sidebar_state="expanded")
 
 load_env()
 
@@ -103,6 +113,9 @@ st.session_state.setdefault("pending_agent_turn", False)
 st.session_state.setdefault("pending_record_work", False)
 st.session_state.setdefault("pending_audit_toasts", [])
 st.session_state.setdefault("show_deck_placeholder", False)
+st.session_state.setdefault("app_page", "chat")
+st.session_state.setdefault("team_id", "")
+st.session_state.setdefault("team_name", "")
 
 
 @st.cache_data(show_spinner=False)
@@ -121,6 +134,63 @@ case_data = cached_case_data(DATA_PATH.stat().st_mtime, entity_mtime)
 scorecard = get_scorecard(st.session_state.score_ledger)
 
 
+
+CUSTOMER_SCOPED_ISSUES = {
+    "AML RISK",
+    "CUSTOMER IN TAX HAVEN",
+    "CONNECTED CUSTOMER EXPOSURE HIDDEN BY SEPARATE CUSTOMER IDS",
+}
+
+
+def select_page(page: str) -> None:
+    st.session_state.app_page = page
+    st.rerun()
+
+
+def render_home_page() -> None:
+    st.markdown("## Nordovia Audit")
+    st.caption("Team audit workspace")
+    st.markdown("### Who is Mikael?")
+    st.write("Mikael von Geld is the senior credit manager answering for the portfolio.")
+    st.markdown("### How to play")
+    st.write("Choose a team, then raise a concrete concern about a contract or customer. Verified findings count for your team.")
+    try:
+        teams = list_teams()
+    except Exception as exc:
+        st.error(str(exc))
+        return
+    selected = render_team_picker(teams, create_team)
+    if selected:
+        st.session_state.team_id = selected["team_id"]
+        st.session_state.team_name = selected["team_name"]
+        st.session_state.app_page = "chat"
+        st.rerun()
+    if st.session_state.get("team_id"):
+        st.info(f"Current team: {st.session_state.team_name}")
+        home_chat, home_facilitator = st.columns(2)
+        with home_chat:
+            if st.button("Open chat", use_container_width=True):
+                select_page("chat")
+        with home_facilitator:
+            if st.button("Facilitator view", use_container_width=True):
+                select_page("facilitator")
+
+
+@st.fragment(run_every=10)
+def render_facilitator_page(case_data: dict[str, Any]) -> None:
+    try:
+        teams = list_teams()
+        rows = leaderboard_rows()
+    except Exception as exc:
+        st.error(str(exc))
+        return
+    st.markdown("## Facilitator")
+    st.caption("Leaderboard refreshes every 10 seconds.")
+    render_leaderboard(rows, teams, case_data)
+
+
+model_name = os.getenv("AUDIT_RPG_MODEL", DEFAULT_MODEL)
+show_tools = False
 st.markdown(
     """
     <style>
@@ -206,7 +276,7 @@ body,
     width: 100%;
     overflow: visible !important;
     padding: 10px 0 0;
-    margin: 0 0 64px;
+    margin: 0 0 38px;
 }
 .page-head .app-title {
     display: block;
@@ -339,7 +409,7 @@ body,
     max-width: 660px;
 }
 .chat-thread {
-    height: min(430px, calc(100vh - 305px));
+    height: min(300px, calc(100vh - 500px));
     min-height: 260px;
     overflow-y: auto;
     padding: 2px 8px 2px 0;
@@ -413,10 +483,27 @@ body,
 }
 .chat-shot {
     display: block;
-    max-width: 250px;
-    width: 100%;
+    width: min(280px, 100%) !important;
+    max-width: 280px !important;
+    height: auto !important;
+    max-height: 190px;
+    object-fit: contain;
+    object-position: left top;
     border-radius: 7px;
     margin-top: 7px;
+}
+.chat-image-hint {
+    color: var(--audit-muted);
+    font-size: 11px;
+    line-height: 1.3;
+    margin-top: 4px;
+}
+.screenshot-guidance {
+    color: var(--audit-muted);
+    font-size: 11px;
+    line-height: 1.35;
+    margin-top: 8px;
+    max-width: 280px;
 }
 .chat-status-row {
     display: grid;
@@ -793,18 +880,17 @@ def render_chat_row(message: dict, previous_role: str | None = None) -> str:
     )
 
 
-def render_chat_thread(messages: list[dict]) -> None:
+def render_chat_thread(messages: list[dict], pending: bool = False, record_work: bool = False):
+    status_slot = None
     if not messages:
-        st.markdown(
-            '<div class="chat-shell"><div class="chat-thread empty-thread">'
-            '<div class="chat-empty">Start with a contract ID or customer that looks unusual.</div>'
-            '</div></div>',
-            unsafe_allow_html=True,
-        )
-        return
+        with st.container(height=300):
+            st.markdown("<div class=chat-shell><div class=chat-thread empty-thread><div class=chat-empty>Start with a contract ID or customer that looks unusual.</div></div></div>", unsafe_allow_html=True)
+            if pending:
+                status_slot = st.empty()
+        return status_slot
 
     previous_role = None
-    with st.container(height=430):
+    with st.container(height=300):
         for message in messages:
             row = render_chat_row(message, previous_role)
             if not row:
@@ -814,7 +900,9 @@ def render_chat_thread(messages: list[dict]) -> None:
                 with st.expander("Activity", expanded=False):
                     render_compact_tool_trace(message["tool_events"])
             previous_role = "user" if message.get("role") == "user" else "assistant"
-
+        if pending:
+            status_slot = st.empty()
+    return status_slot
 def render_chat_status(label: str) -> str:
     avatar_url = html.escape(avatar_data_url("assistant"), quote=True)
     safe_label = html.escape(label)
@@ -870,6 +958,18 @@ def render_compact_tool_trace(events: list[dict]) -> None:
     for event in reversed(events[-12:]):
         tool = str(event.get("tool") or "tool")
         output = event.get("output") or {}
+        if tool == "visual_parser":
+            st.caption("Visual parser output")
+            st.code(str(output.get("markdown_table") or ""), language="markdown")
+            continue
+        if tool == "llm1_parser":
+            st.caption("LLM1 parser output")
+            st.json(output)
+            continue
+        if tool == "llm2_generator":
+            st.caption("LLM2 generator output")
+            st.code(str(output.get("reply") or ""), language="text")
+            continue
         summary = output.get("score_summary") or {}
         findings = output.get("findings") or []
         status = str(output.get("status") or "completed")
@@ -938,6 +1038,27 @@ def audit_notes_from_scorecard(scorecard: dict) -> list[dict]:
     return sorted(notes, key=lambda note: (-note["score"], note["issue_type"]))
 
 
+def local_scorecard_notes(case_data: dict[str, Any], ledger: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for finding in ledger.values():
+        issue_type = str(finding.get("issue_type") or "Finding")
+        group = grouped.setdefault(issue_type, {"customers": set(), "contracts": set(), "findings": 0})
+        group["findings"] += 1
+        customer_id = str(finding.get("customer_id") or "").strip()
+        if customer_id:
+            group["customers"].add(customer_id)
+        if issue_type in CUSTOMER_SCOPED_ISSUES:
+            for contract in contracts_for_customer(case_data, customer_id):
+                group["contracts"].add(str(contract.get("record_id") or ""))
+        else:
+            contract_id = str(finding.get("contract_id") or "").strip()
+            if contract_id:
+                group["contracts"].add(contract_id)
+    return sorted(
+        [{"issue_type": issue, "contract_count": len(item["contracts"]), "customer_count": len(item["customers"]), "score": len(item["contracts"]), "finding_count": item["findings"]} for issue, item in grouped.items()],
+        key=lambda item: (-item["score"], item["issue_type"]),
+    )
+
 def render_audit_summary_table(notes: list[dict]) -> None:
     rows = []
     for note in notes:
@@ -954,7 +1075,7 @@ def render_audit_summary_table(notes: list[dict]) -> None:
         return
     st.markdown(
         "<table class='audit-summary-table'>"
-        "<thead><tr><th>Issue</th><th>Contract</th><th>Customer</th><th>Finding</th></tr></thead>"
+        "<thead><tr><th>Issue Type</th><th>Contract</th><th>Customer</th><th>Score</th></tr></thead>"
         "<tbody>" + "".join(rows) + "</tbody></table>",
         unsafe_allow_html=True,
     )
@@ -983,7 +1104,11 @@ def short_issue_label(issue_type: str) -> str:
         "Recovered Overdue Not Disclosed": "recovered overdue",
         "Vague Hard Collateral": "vague collateral",
     }
-    return labels.get(issue_type, issue_type.lower())
+    normalized = str(issue_type or "finding").replace("_", " ").strip().lower()
+    for key, label in labels.items():
+        if key.replace("_", " ").strip().lower() == normalized:
+            return label
+    return normalized
 
 def count_label(count: int, singular: str) -> str:
     suffix = "" if count == 1 else "s"
@@ -1048,6 +1173,12 @@ def flush_audit_note_toasts() -> None:
 flush_audit_note_toasts()
 
 
+def reset_interview() -> None:
+    clear_chat_history_only()
+    st.session_state.score_ledger = {}
+    st.session_state.team_id = ""
+    st.session_state.team_name = ""
+
 def clear_chat_history_only() -> None:
     st.session_state.messages = []
     st.session_state.tool_events = []
@@ -1059,178 +1190,148 @@ def clear_chat_history_only() -> None:
     st.session_state.pending_audit_toasts = []
 
 
-with st.sidebar:
-    audit_tab, settings_tab = st.tabs(["Audit", "Settings"])
+def render_audit_page() -> None:
+    model_name = os.getenv("AUDIT_RPG_MODEL", DEFAULT_MODEL)
+    st.markdown(
+        """
+        <div class='page-head'>
+          <div class='app-title'>Interview: Mikael von Geld</div>
 
-    with audit_tab:
-        st.subheader("Audit notes")
-        st.markdown(
-            f"<div class='sidebar-summary'>{count_label(scorecard['total_score'], 'finding')} &middot; "
-            f"{count_label(scorecard['total_contract_count'], 'contract')} &middot; "
-            f"{count_label(scorecard['total_customer_count'], 'customer')}</div>",
-            unsafe_allow_html=True,
-        )
-        sidebar_notes = audit_notes_from_scorecard(scorecard)
-        render_audit_summary_table(sidebar_notes)
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        has_findings = scorecard["total_score"] > 0
-        if not has_findings:
-            st.session_state.show_deck_placeholder = False
-        st.markdown("<div class='deck-action'></div>", unsafe_allow_html=True)
-        if st.button("Exit meeting deck", disabled=not has_findings, type="secondary", use_container_width=True):
-            st.session_state.show_deck_placeholder = True
-        if st.session_state.show_deck_placeholder and has_findings:
-            st.markdown(
-                """
-                <div class='deck-placeholder'>
-                  <div class='deck-placeholder-title'>Generate deck</div>
-                  <div class='deck-placeholder-body'>Ready to draft from verified findings when the deck workflow is connected.</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    interview_started = any(message.get("role") == "user" for message in st.session_state.messages)
+    processing_turn = bool(st.session_state.pending_agent_turn)
+    record_work = bool(st.session_state.pending_record_work)
+    portrait_mood = "Checking Records" if processing_turn and record_work else st.session_state.current_mood
 
-    with settings_tab:
-        model_name = os.getenv("AUDIT_RPG_MODEL", DEFAULT_MODEL)
-        show_tools = st.toggle("Show tool trace", value=False)
-        if st.button("Reset interview", type="secondary"):
-            st.session_state.messages = []
-            st.session_state.score_ledger = {}
-            st.session_state.tool_events = []
-            st.session_state.current_mood = "Professional / Controlled"
-            st.session_state.active_refs = []
-            st.session_state.active_investigation_scope = {"contracts": [], "customers": [], "assets": [], "vins": []}
-            st.session_state.pending_record_work = False
-            st.session_state.pending_audit_toasts = []
-            st.session_state.show_deck_placeholder = False
-            st.rerun()
-        if show_tools and st.session_state.tool_events:
-            st.markdown("<div class='sidebar-rule'></div>", unsafe_allow_html=True)
-            st.subheader("Tool trace")
-            render_compact_tool_trace(st.session_state.tool_events)
-st.markdown(
-    """
-    <div class='page-head'>
-      <div class='app-title'>Interview: Mikael von Geld</div>
+    left_col, chat_col = st.columns([0.30, 0.70], gap="large", vertical_alignment="top")
+    with left_col:
+        render_mikael_panel(portrait_mood, interview_started or processing_turn)
+        render_interview_status(st.session_state.current_mood, initial=not interview_started and not processing_turn)
+        st.markdown('<div class="screenshot-guidance">For screenshots, include only the relevant Contract IDs and Customer IDs.</div>', unsafe_allow_html=True)
 
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+    with chat_col:
+        st.markdown("<div class='play-area-label'>Interview</div>", unsafe_allow_html=True)
+        if not os.getenv("OPENAI_API_KEY"):
+            st.warning("OPENAI_API_KEY is missing. Add it to environment or .env before sending a message.")
 
-interview_started = any(message.get("role") == "user" for message in st.session_state.messages)
-processing_turn = bool(st.session_state.pending_agent_turn)
-record_work = bool(st.session_state.pending_record_work)
-portrait_mood = "Checking Records" if processing_turn and record_work else st.session_state.current_mood
+        chat_status_slot = render_chat_thread(st.session_state.messages, pending=processing_turn, record_work=record_work)
 
-left_col, chat_col = st.columns([0.36, 0.64], gap="large", vertical_alignment="top")
-with left_col:
-    render_mikael_panel(portrait_mood, interview_started or processing_turn)
-    render_interview_status(st.session_state.current_mood, initial=not interview_started and not processing_turn)
-
-with chat_col:
-    st.markdown("<div class='play-area-label'>Interview</div>", unsafe_allow_html=True)
-    if not os.getenv("OPENAI_API_KEY"):
-        st.warning("OPENAI_API_KEY is missing. Add it to environment or .env before sending a message.")
-
-    render_chat_thread(st.session_state.messages)
-
-    with st.container(key="clear_chat_control"):
-        if st.button(
-            "Clear chat",
-            key="clear_chat_only_button",
-            type="secondary",
-            disabled=not st.session_state.messages or st.session_state.pending_agent_turn,
-        ):
-            clear_chat_history_only()
-            st.rerun()
-
-    if st.session_state.pending_agent_turn:
-        status_slot = st.empty()
-        reply_slot = st.empty()
-        try:
-            reply, events, updated_scope = run_agent_turn_with_loading(
-                status_slot=status_slot,
-                messages=st.session_state.messages,
-                score_ledger=st.session_state.score_ledger,
-                data=case_data,
-                model=model_name,
-                active_refs=st.session_state.active_refs,
-                active_investigation_scope=st.session_state.active_investigation_scope,
-                record_work=record_work,
-            )
-            status_slot.empty()
-        except Exception as exc:
-            reply = f"[MOOD:Annoyed / Dismissive]\nI cannot answer while the model connection is failing: {exc}"
-            events = []
-            updated_scope = st.session_state.active_investigation_scope
-            status_slot.markdown(render_chat_status("Mikael cannot reach the case file."), unsafe_allow_html=True)
-        previous_role = st.session_state.messages[-1].get("role") if st.session_state.messages else None
-        reply_message = {"role": "assistant", "content": reply, "tool_events": events}
-        with reply_slot.container():
-            st.markdown(
-                f'<div class="chat-shell">{render_chat_row(reply_message, previous_role)}</div>',
-                unsafe_allow_html=True,
-            )
-            if events:
-                with st.expander("Activity", expanded=False):
-                    render_compact_tool_trace(events)
-        score_events = audit_notes_from_events(events)
-        queue_audit_note_toasts(score_events)
-
-        mood = extract_mood(reply)
-        st.session_state.current_mood = mood
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": reply,
-            "mood": mood,
-            "score_events": score_events,
-            "tool_events": events,
-        })
-        st.session_state.tool_events.extend(events)
-        st.session_state.active_investigation_scope = updated_scope
-        st.session_state.active_refs = (
-            updated_scope["contracts"]
-            + updated_scope["customers"]
-            + updated_scope["assets"]
-            + updated_scope["vins"]
-        )
-        st.session_state.pending_agent_turn = False
-        st.session_state.pending_record_work = False
-        st.rerun()
-    else:
-        prompt = st.chat_input(
-            "Ask about a contract, customer, or discrepancy",
-            accept_file=True,
-            file_type=["png", "jpg", "jpeg"],
-        )
-
-        if prompt:
-            text = prompt.text or ""
-            image_urls = []
-            display_images = []
-            for uploaded in prompt.files or []:
-                content = uploaded.getvalue()
-                image_urls.append(image_to_data_url(uploaded.name, content))
-                display_images.append(content)
-
-            st.session_state.messages.append(
-                {
-                    "role": "user",
-                    "content": text,
-                    "images": image_urls,
-                    "display_images": display_images,
-                }
-            )
-            quick_reply = small_talk_reply(st.session_state.messages, case_data)
-            if quick_reply:
-                mood = extract_mood(quick_reply)
-                st.session_state.current_mood = mood
-                st.session_state.messages.append({"role": "assistant", "content": quick_reply, "mood": mood, "score_events": []})
+        with st.container(key="clear_chat_control"):
+            if st.button(
+                "Clear chat",
+                key="clear_chat_only_button",
+                type="secondary",
+                disabled=not st.session_state.messages or st.session_state.pending_agent_turn,
+            ):
+                clear_chat_history_only()
                 st.rerun()
 
-            st.session_state.pending_record_work = should_require_tool(case_data, st.session_state.messages, st.session_state.active_refs)
-            st.session_state.pending_agent_turn = True
+        if st.session_state.pending_agent_turn:
+            status_slot = chat_status_slot or st.empty()
+            reply_slot = st.empty()
+            try:
+                reply, events, updated_scope = run_agent_turn_with_loading(
+                    status_slot=status_slot,
+                    messages=st.session_state.messages,
+                    score_ledger=st.session_state.score_ledger,
+                    data=case_data,
+                    model=model_name,
+                    active_refs=st.session_state.active_refs,
+                    active_investigation_scope=st.session_state.active_investigation_scope,
+                    record_work=record_work,
+                )
+                status_slot.empty()
+            except Exception as exc:
+                reply = f"[MOOD:Annoyed / Dismissive]\nI cannot answer while the model connection is failing: {exc}"
+                events = []
+                updated_scope = st.session_state.active_investigation_scope
+                status_slot.markdown(render_chat_status("Mikael cannot reach the case file."), unsafe_allow_html=True)
+            previous_role = st.session_state.messages[-1].get("role") if st.session_state.messages else None
+            reply_message = {"role": "assistant", "content": reply, "tool_events": events}
+            with reply_slot.container():
+                st.markdown(
+                    f'<div class="chat-shell">{render_chat_row(reply_message, previous_role)}</div>',
+                    unsafe_allow_html=True,
+                )
+                if events:
+                    with st.expander("Activity", expanded=False):
+                        render_compact_tool_trace(events)
+            score_events = audit_notes_from_events(events)
+            queue_audit_note_toasts(score_events)
+
+            mood = extract_mood(reply)
+            st.session_state.current_mood = mood
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": reply,
+                "mood": mood,
+                "score_events": score_events,
+                "tool_events": events,
+            })
+            st.session_state.tool_events.extend(events)
+            st.session_state.active_investigation_scope = updated_scope
+            st.session_state.active_refs = (
+                updated_scope["contracts"]
+                + updated_scope["customers"]
+                + updated_scope["assets"]
+                + updated_scope["vins"]
+            )
+            st.session_state.pending_agent_turn = False
+            st.session_state.pending_record_work = False
+            st.rerun()
+        else:
+            prompt = st.chat_input(
+                "Ask about a contract, customer, or discrepancy",
+                accept_file=True,
+                file_type=["png", "jpg", "jpeg"],
+            )
+
+            if prompt:
+                text = prompt.text or ""
+                image_urls = []
+                display_images = []
+                for uploaded in prompt.files or []:
+                    content = uploaded.getvalue()
+                    image_urls.append(image_to_data_url(uploaded.name, content))
+                    display_images.append(content)
+
+                st.session_state.messages.append(
+                    {
+                        "role": "user",
+                        "content": text,
+                        "images": image_urls,
+                        "display_images": display_images,
+                    }
+                )
+                quick_reply = small_talk_reply(st.session_state.messages, case_data)
+                if quick_reply:
+                    mood = extract_mood(quick_reply)
+                    st.session_state.current_mood = mood
+                    st.session_state.messages.append({"role": "assistant", "content": quick_reply, "mood": mood, "score_events": []})
+                    st.rerun()
+
+                st.session_state.pending_record_work = should_require_tool(case_data, st.session_state.messages, st.session_state.active_refs)
+                st.session_state.pending_agent_turn = True
+                st.rerun()
+
+
+
+
+with st.sidebar:
+    audit_nav, settings_nav = st.tabs(["Audit", "Settings"])
+    with audit_nav:
+        st.markdown("### Audit notes")
+        display_notes = local_scorecard_notes(case_data, st.session_state.score_ledger)
+        total_score = sum(int(item["score"]) for item in display_notes)
+        st.caption(f"Score {total_score} · {len(display_notes)} issue type")
+        render_audit_summary_table(display_notes)
+    with settings_nav:
+        if st.button("Reset interview", key="reset_interview_button", type="secondary", use_container_width=True):
+            reset_interview()
             st.rerun()
 
-
+render_audit_page()
