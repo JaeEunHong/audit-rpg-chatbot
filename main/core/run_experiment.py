@@ -588,10 +588,8 @@ def build_response_context(result: dict[str, Any]) -> ResponseContext:
             "spoken_identification": build_spoken_identification(record),
             "public_overview": public_overview,
         }
-        if response_mode == "lookup":
-            item["public_narrative"] = public_lookup_slice(record, lookup_content)
-        elif response_mode == "unsupported":
-            item["public_narrative"] = item["public_overview"]
+        if response_mode in {"lookup", "unsupported"}:
+            item["public_narrative"] = record.get("public_narrative", "")
         records.append(item)
     return ResponseContext(
         response_mode=response_mode,
