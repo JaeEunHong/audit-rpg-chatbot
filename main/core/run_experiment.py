@@ -763,15 +763,39 @@ def verify_investigation_request(
             },
             "approved_material": {},
         }
-    approved = []
+    verified_groups_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for finding in score.get("findings", []):
         material = finding.get("issue_material")
-        if finding.get("status") in {"new_score", "repeat"} and material:
-            approved.append({
-                "issue_type": finding.get("issue_type"),
-                "why_it_violates_policy": material.get("why_it_violates_policy", ""),
-                "explanation_given_to_auditor": material.get("explanation_given_to_auditor", ""),
-            })
+        if finding.get("status") not in {"new_score", "repeat"} or not material:
+            continue
+        issue_type = str(finding.get("issue_type") or "Finding")
+        target_type = str(finding.get("record_type") or "record")
+        group_key = (issue_type, target_type)
+        group = verified_groups_by_key.setdefault(
+            group_key,
+            {
+                "issue_type": issue_type,
+                "target_type": target_type,
+                "findings": [],
+            },
+        )
+        group["findings"].append(
+            {
+                "record_id": finding.get("record_id"),
+                "record_type": finding.get("record_type"),
+                "contract_id": finding.get("contract_id"),
+                "customer_id": finding.get("customer_id"),
+                "customer_name": finding.get("customer_name"),
+                "status": finding.get("status"),
+                "approved_material": {
+                    "why_it_violates_policy": material.get("why_it_violates_policy", ""),
+                    "explanation_given_to_auditor": material.get("explanation_given_to_auditor", ""),
+                },
+            }
+        )
+    approved_material = {
+        "verified_groups": list(verified_groups_by_key.values())
+    } if verified_groups_by_key else {}
     finding_rows = [
         {"record_id": f.get("record_id"), "contract_id": f.get("contract_id"), "customer_id": f.get("customer_id"), "customer_name": f.get("customer_name"), "issue_type": f.get("issue_type"), "status": f.get("status").lower()}
         for f in score.get("findings", [])
@@ -797,18 +821,6 @@ def verify_investigation_request(
         "verified_count": verified_count,
         "not_verified_count": not_verified_count,
     }
-    if len(approved) <= MAX_FINDINGS_FOR_FULL_CONTEXT:
-        approved_material = {"findings": approved} if approved else {}
-    else:
-        by_issue: dict[str, dict[str, Any]] = {}
-        for item in approved:
-            issue_type = str(item.get("issue_type") or "Finding")
-            summary = by_issue.setdefault(issue_type, {"count": 0, "sample_record_ids": [], "explanation": item.get("explanation_given_to_auditor", "")})
-            summary["count"] += 1
-            record_id = str(item.get("record_id") or "")
-            if record_id and record_id not in summary["sample_record_ids"] and len(summary["sample_record_ids"]) < 3:
-                summary["sample_record_ids"].append(record_id)
-        approved_material = {"verified_findings_summary": {"total": len(approved), "by_issue": by_issue}}
     return {
         "status": score.get("status", "unsupported"),
         "records": response_records,
