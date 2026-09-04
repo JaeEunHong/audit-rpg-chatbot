@@ -71,7 +71,10 @@ Rules:
 
 - Use `explanation` only when the auditor asks why a previously discussed concern occurred.
 
+- Whenever the latest message pairs a resolved entity or visible entity group with a negative or evaluative concern (for example, seems strange, looks unusual, questionable, wrong, does not belong, or why was this allowed), treat it as an audit concern even when no parquet issue label is named. Use `explanation`, not `overview`. If the concern cannot be mapped safely to an issue type, return an empty `issue_claims` array so the runtime asks a contextual clarification; never downgrade it to a public lookup.
+
 - If the latest message both introduces a new concern and asks for an explanation, treat it as a new investigation concern.
+- Example: "these customers seem to be in strange place" with visible customer entities -> `requested_content = "explanation"`, `issue_claims = []`; do not answer with a public overview and do not say their locations are expected.
 
 Determine:
 
