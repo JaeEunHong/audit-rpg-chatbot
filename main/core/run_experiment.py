@@ -128,8 +128,13 @@ def pre_extracted_entities_from_visual_table(
         for line in str(table_text or "").splitlines()
         if line.strip().startswith("|")
     ]
+    recognized_headers = ("contractid", "customerid", "customername", "assetid", "vin")
     header_index = next(
-        (index for index, line in enumerate(lines) if "contractid" in line.lower()),
+        (
+            index
+            for index, line in enumerate(lines)
+            if any(header in line.lower().replace(" ", "").replace("_", "") for header in recognized_headers)
+        ),
         None,
     )
     if header_index is None:
@@ -212,21 +217,18 @@ def parse_investigation_request(
     ]
     visual_entity_text = ""
     if image_urls:
-        visual_prompt = """
-You are a visual entity extractor for an audit table.
+        visual_prompt = """You are a visual entity extractor for an audit table.
 Read the entire attached image and return plain text only.
 Extract every readable row from top to bottom. Do not filter rows by the auditor's issue.
-For each row, preserve the exact visible ContractID and include customer ID, customer name,
-Use ContractID for values beginning with SE and six digits, CustomerID for CUST plus four digits,
-AssetID for AST plus six digits, VIN for a VIN-like 17-character alphanumeric value, and CustomerName
-for company or legal-entity names such as Lund Enterprises or Alder & Brisk Freight.
-asset ID, and VIN when readable. Do not infer missing values. Do not classify issues,
-score records, summarize the table, or omit rows after the first few.
-Return one Markdown table in top-to-bottom order. Use one row for every visible table row:
-| # | ContractID | CustomerID | CustomerName | AssetID | VIN |
-|---:|---|---|---|---|---|
-Use blank cells when a value is unreadable. Never invent values.
-"""
+Use only values that are visibly present and readable. Never infer, complete, or invent a missing ID,
+customer, asset, or VIN. Use these canonical column names when the corresponding column is visible:
+ContractID for values beginning with SE and six digits; CustomerID for CUST plus four digits;
+CustomerName for company or legal-entity names; AssetID for AST plus six digits; VIN for a
+VIN-like 17-character alphanumeric value. A screenshot may contain any subset of these columns.
+Do not force absent columns into the output and do not add blank placeholder columns.
+Return one Markdown table in top-to-bottom order with only the visible canonical columns.
+Use one row for every readable visible table row. Do not classify issues, score records, summarize
+the table, or omit rows after the first few.        """
         visual_content: list[dict[str, Any]] = [
             {"type": "input_text", "text": "Extract all visible table entities."},
         ]
