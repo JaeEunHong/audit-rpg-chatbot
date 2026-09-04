@@ -117,6 +117,35 @@ st.session_state.setdefault("app_page", "chat")
 st.session_state.setdefault("team_id", "")
 st.session_state.setdefault("team_name", "")
 
+def restore_score_ledger_from_messages() -> None:
+    """Recover verified findings if Streamlit retained chat but lost the ledger."""
+    ledger = st.session_state.get("score_ledger")
+    if ledger:
+        return
+
+    recovered: dict[str, dict[str, Any]] = {}
+    events = list(st.session_state.get("tool_events", []))
+    for message in st.session_state.get("messages", []):
+        events.extend(message.get("tool_events", []))
+
+    for event in events:
+        if event.get("tool") != "update_score":
+            continue
+        output = event.get("output") or {}
+        for finding in output.get("findings", []):
+            if finding.get("status") != "new_score":
+                continue
+            record_id = str(finding.get("record_id") or "").strip()
+            issue_key = str(finding.get("issue_key") or "").strip()
+            if record_id and issue_key:
+                recovered[f"{record_id}::{issue_key}"] = finding
+
+    if recovered:
+        st.session_state.score_ledger = recovered
+
+
+restore_score_ledger_from_messages()
+
 
 @st.cache_data(show_spinner=False)
 def cached_case_data(data_mtime: float, entity_mtime: float):
