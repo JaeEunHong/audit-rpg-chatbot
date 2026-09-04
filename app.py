@@ -1,5 +1,7 @@
-import base64
+﻿import base64
 import html
+import importlib
+import json
 import os
 import sys
 import time
@@ -16,25 +18,39 @@ if str(CORE_DIR) not in sys.path:
 
 import streamlit as st
 
-from audit_rpg import DATA_PATH, DEFAULT_MODEL, ENTITY_MASTER_PATH, active_refs_after_turn, extract_mood, get_scorecard, image_to_data_url, interview_state_for_mood, load_case_data, load_env, should_require_tool, small_talk_reply
-from run_experiment import contracts_for_customer, run_investigation
+from app_support import DEFAULT_MODEL, extract_mood, image_to_data_url, interview_state_for_mood, load_env, small_talk_reply
+import chat_runtime
+from conversation_state import ConversationState
+
+chat_runtime = importlib.reload(chat_runtime)
+run_chat_turn = chat_runtime.run_chat_turn
 
 
 
 def run_agent_turn(
-    messages, score_ledger, data, model=None, active_refs=None,
-    active_investigation_scope=None,
+    messages, score_ledger, data, model=None, status_callback=None,
 ):
     latest_user = next((item for item in reversed(messages) if item.get("role") == "user"), {})
-    result = run_investigation(
+    state_before = st.session_state.conversation_state.to_dict()
+    runtime_messages = [
+        {
+            "message_number": index + 1,
+            "role": item.get("role", "user"),
+            "content": str(item.get("content") or ""),
+            "image_text": str(item.get("visual_extraction_text") or ""),
+        }
+        for index, item in enumerate(messages)
+    ]
+    result = run_chat_turn(
         str(latest_user.get("content") or ""),
-        data,
+        st.session_state.graph_data,
+        st.session_state.conversation_state,
+        runtime_messages,
         score_ledger,
-        model or os.getenv("AUDIT_RPG_MODEL", "gpt-4.1"),
         image_data_urls=list(latest_user.get("images") or []),
-        chat_history=messages,
-        active_investigation_scope=active_investigation_scope,
+        status_callback=status_callback,
     )
+    st.session_state.conversation_state = result.get("conversation_state", st.session_state.conversation_state)
     visual_text = str(result.get("visual_extraction_text") or "").strip()
     if visual_text and latest_user is not None:
         latest_user["visual_extraction_text"] = visual_text
@@ -43,13 +59,42 @@ def run_agent_turn(
         events.append({"tool": "visual_parser", "output": {"markdown_table": visual_text}})
     if result.get("request"):
         events.append({"tool": "llm1_parser", "output": result["request"]})
-    if result.get("status") == "lookup":
-        events.append({"tool": "find_records", "output": {"status": "lookup", "records": result.get("records", [])}})
+    events.append({"tool": "python_flow", "output": {"status": result.get("status"), "scoring": result.get("scoring")}})
     score_result = result.get("score_result") or {}
     if score_result.get("findings"):
         events.append({"tool": "update_score", "output": score_result})
+    state_after = result.get("conversation_state")
+    state_after = state_after.to_dict() if state_after else state_before
+    events.append({"tool": "conversation_debug", "output": {
+        "message": str(latest_user.get("content") or ""),
+        "before": state_before,
+        "after": state_after,
+        "scoring": score_result,
+        "reply": result["reply"],
+    }})
     events.append({"tool": "llm2_generator", "output": {"reply": result["reply"]}})
-    return result["reply"], events, result.get("active_investigation_scope", active_investigation_scope)
+    return result["reply"], events, {}
+
+
+def render_activity(events: list[dict[str, Any]]) -> None:
+    debug = next((event.get("output") for event in events if event.get("tool") == "conversation_debug"), None)
+    if debug:
+        before = debug.get("before", {})
+        after = debug.get("after", {})
+        scoring = debug.get("scoring") or {}
+        st.code("\n".join([
+            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”",
+            f'USER: "{debug.get("message", "")}"',
+            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”",
+            f"[entity]     {before.get('focus_entities')}  ->  {after.get('focus_entities')}",
+            f"[topic]      {before.get('focus_topic')}  ->  {after.get('focus_topic')}",
+            f"[confirm]    {before.get('pending_confirmation')}  ->  {after.get('pending_confirmation')}",
+            f"[raw_data]   {'reused' if before.get('last_raw_data') else 'not reused'}",
+            f"[score]      {scoring.get('status', 'not run')}  score={scoring.get('score', 0)}  delta={scoring.get('score_delta', 0)}  ledger_entries={len(st.session_state.score_ledger)}",
+            "â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€",
+            f"RESPONSE: {debug.get('reply', '')}",
+            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”",
+        ]), language="text")
 st.set_page_config(page_title="Nordovia Audit RPG", page_icon=":material/search:", layout="wide", initial_sidebar_state="expanded")
 
 load_env()
@@ -102,13 +147,9 @@ STATUS_MESSAGES = [
 RECORD_STATUS_MESSAGES = STATUS_MESSAGES
 st.session_state.setdefault("messages", [])
 st.session_state.setdefault("score_ledger", {})
+st.session_state.setdefault("conversation_state", ConversationState())
 st.session_state.setdefault("tool_events", [])
 st.session_state.setdefault("current_mood", "Professional / Controlled")
-st.session_state.setdefault("active_refs", [])
-st.session_state.setdefault(
-    "active_investigation_scope",
-    {"contracts": [], "customers": [], "assets": [], "vins": []},
-)
 st.session_state.setdefault("pending_agent_turn", False)
 st.session_state.setdefault("pending_record_work", False)
 st.session_state.setdefault("pending_audit_toasts", [])
@@ -148,19 +189,17 @@ restore_score_ledger_from_messages()
 
 
 @st.cache_data(show_spinner=False)
-def cached_case_data(data_mtime: float, entity_mtime: float):
-    return load_case_data(DATA_PATH, ENTITY_MASTER_PATH)
-
-@st.cache_data(show_spinner=False)
 def image_data_url(path_text: str, image_mtime: float) -> str:
     path = Path(path_text)
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 
 
-entity_mtime = ENTITY_MASTER_PATH.stat().st_mtime if ENTITY_MASTER_PATH.exists() else 0.0
-case_data = cached_case_data(DATA_PATH.stat().st_mtime, entity_mtime)
-scorecard = get_scorecard(st.session_state.score_ledger)
+GRAPH_PATH = ROOT / "main" / "output" / "case_graph.json"
+if not GRAPH_PATH.exists():
+    raise FileNotFoundError("refactoring/output/case_graph.json is missing")
+st.session_state.graph_data = json.loads(GRAPH_PATH.read_text(encoding="utf-8"))
+case_data = st.session_state.graph_data
 
 
 
@@ -218,7 +257,7 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
     render_leaderboard(rows, teams, case_data)
 
 
-model_name = os.getenv("AUDIT_RPG_MODEL", DEFAULT_MODEL)
+model_name = os.getenv("AUDIT_GENERATOR_MODEL", DEFAULT_MODEL)
 show_tools = False
 st.markdown(
     """
@@ -574,7 +613,7 @@ body,
     min-height: 46px !important;
     border-radius: 10px !important;
     border: 1px solid rgba(221, 216, 207, 0.86) !important;
-    background: var(--audit-input) !important;
+    background: rgba(255, 255, 255, 0.92) !important;
     box-shadow: none !important;
 }
 [data-testid="stChatInput"] textarea {
@@ -583,6 +622,10 @@ body,
     min-height: 40px !important;
     line-height: 1.35 !important;
     color: var(--audit-text) !important;
+    background: rgba(255, 255, 255, 0.92) !important;
+}
+[data-testid="stChatInput"] textarea::placeholder {
+    color: rgba(63, 95, 111, 0.72) !important;
 }
 [data-testid="stChatInput"] button {
     width: 30px !important;
@@ -927,7 +970,7 @@ def render_chat_thread(messages: list[dict], pending: bool = False, record_work:
             st.markdown(row, unsafe_allow_html=True)
             if message.get("role") == "assistant" and message.get("tool_events"):
                 with st.expander("Activity", expanded=False):
-                    render_compact_tool_trace(message["tool_events"])
+                    render_activity(message["tool_events"])
             previous_role = "user" if message.get("role") == "user" else "assistant"
         if pending:
             status_slot = st.empty()
@@ -958,16 +1001,41 @@ def status_message_for_elapsed(elapsed_seconds: float, record_work: bool = False
     return label
 
 
-def run_agent_turn_with_loading(*, status_slot, messages, score_ledger, data, model: str, active_refs: list[str], active_investigation_scope: dict[str, list[str]], record_work: bool):
-    status_slot.markdown(render_chat_status(status_message_for_elapsed(0, record_work)), unsafe_allow_html=True)
+def run_agent_turn_with_loading(*, status_slot, messages, score_ledger, data, model: str, record_work: bool):
+    def update_status(message: str) -> None:
+        status_slot.markdown(render_chat_status(message), unsafe_allow_html=True)
+
+    update_status("Mikael is checking the system.")
     return run_agent_turn(
         messages,
         score_ledger,
         data,
         model=model,
-        active_refs=active_refs,
-        active_investigation_scope=active_investigation_scope,
+        status_callback=update_status,
     )
+def render_activity(events: list[dict[str, Any]]) -> None:
+    debug = next((event.get("output") for event in events if event.get("tool") == "conversation_debug"), None)
+    if not debug:
+        return
+    before = debug.get("before", {})
+    after = debug.get("after", {})
+    scoring = debug.get("scoring") or {}
+    lines = [
+        "======================================",
+        f'USER: "{debug.get("message", "")}"',
+        "======================================",
+        f"[entity]     {before.get('focus_entities')}  ->  {after.get('focus_entities')}",
+        f"[topic]      {before.get('focus_topic')}  ->  {after.get('focus_topic')}",
+        f"[confirm]    {before.get('pending_confirmation')}  ->  {after.get('pending_confirmation')}",
+        f"[raw_data]   {'reused' if before.get('last_raw_data') else 'not reused'}",
+        f"[score]      {scoring.get('status', 'not run')}  score={scoring.get('score', 0)}  delta={scoring.get('score_delta', 0)}  ledger_entries={len(st.session_state.score_ledger)}",
+        "--------------------------------------",
+        f"RESPONSE: {debug.get('reply', '')}",
+        "======================================",
+    ]
+    st.code("\n".join(lines), language="text")
+
+
 def title_case_issue(issue_type: str) -> str:
     return str(issue_type or "Finding").replace("_", " ").lower().title()
 
@@ -1077,8 +1145,8 @@ def local_scorecard_notes(case_data: dict[str, Any], ledger: dict[str, dict[str,
         if customer_id:
             group["customers"].add(customer_id)
         if issue_type in CUSTOMER_SCOPED_ISSUES:
-            for contract in contracts_for_customer(case_data, customer_id):
-                group["contracts"].add(str(contract.get("record_id") or ""))
+            for contract_id in case_data.get("customers", {}).get(customer_id, {}).get("contract_ids", []):
+                group["contracts"].add(str(contract_id))
         else:
             contract_id = str(finding.get("contract_id") or "").strip()
             if contract_id:
@@ -1207,20 +1275,20 @@ def reset_interview() -> None:
     st.session_state.score_ledger = {}
     st.session_state.team_id = ""
     st.session_state.team_name = ""
+    st.session_state.conversation_state = ConversationState()
 
 def clear_chat_history_only() -> None:
     st.session_state.messages = []
     st.session_state.tool_events = []
     st.session_state.current_mood = "Professional / Controlled"
-    st.session_state.active_refs = []
-    st.session_state.active_investigation_scope = {"contracts": [], "customers": [], "assets": [], "vins": []}
     st.session_state.pending_agent_turn = False
     st.session_state.pending_record_work = False
     st.session_state.pending_audit_toasts = []
+    st.session_state.conversation_state = ConversationState()
 
 
 def render_audit_page() -> None:
-    model_name = os.getenv("AUDIT_RPG_MODEL", DEFAULT_MODEL)
+    model_name = os.getenv("AUDIT_GENERATOR_MODEL", DEFAULT_MODEL)
     st.markdown(
         """
         <div class='page-head'>
@@ -1269,15 +1337,13 @@ def render_audit_page() -> None:
                     score_ledger=st.session_state.score_ledger,
                     data=case_data,
                     model=model_name,
-                    active_refs=st.session_state.active_refs,
-                    active_investigation_scope=st.session_state.active_investigation_scope,
                     record_work=record_work,
                 )
                 status_slot.empty()
             except Exception as exc:
                 reply = f"[MOOD:Annoyed / Dismissive]\nI cannot answer while the model connection is failing: {exc}"
                 events = []
-                updated_scope = st.session_state.active_investigation_scope
+                updated_scope = {}
                 status_slot.markdown(render_chat_status("Mikael cannot reach the case file."), unsafe_allow_html=True)
             previous_role = st.session_state.messages[-1].get("role") if st.session_state.messages else None
             reply_message = {"role": "assistant", "content": reply, "tool_events": events}
@@ -1288,7 +1354,7 @@ def render_audit_page() -> None:
                 )
                 if events:
                     with st.expander("Activity", expanded=False):
-                        render_compact_tool_trace(events)
+                        render_activity(events)
             score_events = audit_notes_from_events(events)
             queue_audit_note_toasts(score_events)
 
@@ -1302,13 +1368,6 @@ def render_audit_page() -> None:
                 "tool_events": events,
             })
             st.session_state.tool_events.extend(events)
-            st.session_state.active_investigation_scope = updated_scope
-            st.session_state.active_refs = (
-                updated_scope["contracts"]
-                + updated_scope["customers"]
-                + updated_scope["assets"]
-                + updated_scope["vins"]
-            )
             st.session_state.pending_agent_turn = False
             st.session_state.pending_record_work = False
             st.rerun()
@@ -1343,7 +1402,7 @@ def render_audit_page() -> None:
                     st.session_state.messages.append({"role": "assistant", "content": quick_reply, "mood": mood, "score_events": []})
                     st.rerun()
 
-                st.session_state.pending_record_work = should_require_tool(case_data, st.session_state.messages, st.session_state.active_refs)
+                st.session_state.pending_record_work = True
                 st.session_state.pending_agent_turn = True
                 st.rerun()
 
@@ -1354,8 +1413,10 @@ with st.sidebar:
     audit_nav, settings_nav = st.tabs(["Audit", "Settings"])
     with audit_nav:
         st.markdown("### Audit notes")
-        display_notes = local_scorecard_notes(case_data, st.session_state.score_ledger)
-        total_score = sum(int(item["score"]) for item in display_notes)
+        display_notes = local_scorecard_notes(st.session_state.graph_data, st.session_state.score_ledger)
+        issue_count = len({item.get("issue_type") for item in display_notes if item.get("issue_type")})
+        contract_count = len({finding.get("contract_id") for finding in st.session_state.score_ledger.values() if finding.get("contract_id")})
+        total_score = issue_count * contract_count
         st.caption(f"Score {total_score} · {len(display_notes)} issue type")
         render_audit_summary_table(display_notes)
     with settings_nav:
