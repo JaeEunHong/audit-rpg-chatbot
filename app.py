@@ -1314,7 +1314,7 @@ def render_audit_page() -> None:
             st.rerun()
         else:
             prompt = st.chat_input(
-                "Found something unusual? Name the record and tell me what you found.",
+                "Found something unusual? Point me to the record and tell me what caught your eye.",
                 accept_file=True,
                 file_type=["png", "jpg", "jpeg"],
             )
