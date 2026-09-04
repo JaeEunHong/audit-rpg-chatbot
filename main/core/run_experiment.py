@@ -206,6 +206,46 @@ def parser_review_required(
         return False
     explicit_refs = resolve_record_references_from_text(case_data, message).get("refs", [])
     return not request.issue_claims or not explicit_refs
+
+def visual_extraction_quality(
+    case_data: dict[str, Any],
+    table_text: str,
+) -> dict[str, Any]:
+    lines = [line.strip() for line in str(table_text or "").splitlines() if line.strip().startswith("|")]
+    header_index = next((index for index, line in enumerate(lines) if any(header in line.lower().replace(" ", "").replace("_", "") for header in ("contractid", "customerid", "customername", "assetid", "vin"))), None)
+    quality = {"has_contract_column": False, "valid_contract_count": 0, "blank_contract_rows": 0, "invalid_contract_ids": [], "unclear_customer_names": []}
+    if header_index is None:
+        return quality
+    headers = [cell.strip().lower().replace(" ", "").replace("_", "") for cell in lines[header_index].strip("|").split("|")]
+    quality["has_contract_column"] = "contractid" in headers
+    for line in lines[header_index + 1:]:
+        values = [cell.strip() for cell in line.strip("|").split("|")]
+        if not values or all(not value.replace("-", "").replace(":", "").strip() for value in values):
+            continue
+        row = dict(zip(headers, values))
+        contract_value = row.get("contractid", "").strip()
+        if "contractid" in headers:
+            if not contract_value or contract_value in {"-", "?", "\ufffd"}:
+                quality["blank_contract_rows"] += 1
+            elif normalize_ref_list(case_data, [contract_value]):
+                quality["valid_contract_count"] += 1
+            else:
+                quality["invalid_contract_ids"].append(contract_value)
+        customer_name = row.get("customername", "").strip()
+        if customer_name and any(marker in customer_name for marker in ("\ufffd", "?")):
+            quality["unclear_customer_names"].append(customer_name)
+    return quality
+
+
+def visual_quality_clarification(request: AuditRequest, quality: dict[str, Any] | None, case_data: dict[str, Any]) -> str | None:
+    if not quality:
+        return None
+    if quality.get("blank_contract_rows") or quality.get("invalid_contract_ids"):
+        return "I cannot reliably read every ContractID in that screenshot. Please upload a sharper crop or paste the ContractIDs as text."
+    customer_issue = any(issue_is_customer_scoped(case_data, str(claim.get("candidate_issue") or "")) for claim in request.issue_claims)
+    if customer_issue and quality.get("unclear_customer_names"):
+        return "Some CustomerNames are unclear in the screenshot. Please upload a sharper crop or provide the CustomerIDs."
+    return None
 def parse_investigation_request(
     message: str,
     case_data: dict[str, Any],
@@ -214,7 +254,8 @@ def parse_investigation_request(
     image_data_urls: list[str] | None = None,
     chat_history: list[dict[str, Any]] | None = None,
     active_investigation_scope: dict[str, list[str]] | None = None,
-    visual_text_out: list[str] | None = None) -> AuditRequest:
+    visual_text_out: list[str] | None = None,
+    visual_quality_out: list[dict[str, Any]] | None = None) -> AuditRequest:
     load_env()
     client = get_openai_client()
     image_urls = []
@@ -286,6 +327,8 @@ the table, or omit rows after the first few.        """
         })
         if visual_text_out is not None:
             visual_text_out.append(visual_entity_text)
+        if visual_quality_out is not None:
+            visual_quality_out.append(visual_extraction_quality(case_data, visual_entity_text))
     schema = {
         "type": "json_schema",
         "name": "audit_request",
@@ -488,7 +531,17 @@ def verify_investigation_request(
     ledger: dict[str, dict[str, Any]],
     original_text: str | None = None,
     active_investigation_scope: dict[str, list[str]] | None = None,
+    visual_quality: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    quality_clarification = visual_quality_clarification(request, visual_quality, case_data)
+    if quality_clarification:
+        return {
+            "status": "clarification",
+            "clarification": quality_clarification,
+            "records": [],
+            "score_result": {},
+            "approved_material": {},
+        }
     resolved: dict[str, list[dict[str, Any]]] = {}
     ambiguous: list[str] = []
     ambiguity_refs: list[str] = []
@@ -510,6 +563,27 @@ def verify_investigation_request(
     latest_explicit_refs = []
     if original_text:
         latest_explicit_refs = normalize_ref_list(case_data, resolve_record_references_from_text(case_data, original_text).get("refs", []))
+    # A readable contract ID is authoritative; supplementary customer names in a
+    # screenshot may be ambiguous or OCR-corrupted without blocking the contracts.
+    has_resolved_contract = any(
+        target.get("record", {}).get("record_type") == "contract"
+        for targets in resolved.values()
+        for target in targets
+    )
+    if has_resolved_contract:
+        missing = [
+            str(mention.get("text") or "")
+            for mention in request.entity_mentions
+            if str(mention.get("mention_id") or "") not in resolved
+            and str(mention.get("kind") or "").lower() not in {"name", "customer"}
+        ]
+        unresolved_non_name = any(
+            str(mention.get("mention_id") or "") not in resolved
+            and str(mention.get("kind") or "").lower() not in {"name", "customer"}
+            for mention in request.entity_mentions
+        )
+        if not unresolved_non_name:
+            ambiguous = []
     if not resolved and not ambiguous and not latest_explicit_refs:
         active_targets = active_scope_records(case_data, active_investigation_scope)
         if len(active_targets) == 1:
@@ -888,6 +962,7 @@ def run_investigation(
 ) -> dict[str, Any]:
     started = time.perf_counter()
     visual_text_parts: list[str] = []
+    visual_quality_parts: list[dict[str, Any]] = []
     request = parse_investigation_request(
         message,
         case_data,
@@ -897,6 +972,7 @@ def run_investigation(
         chat_history,
         active_investigation_scope,
         visual_text_parts,
+        visual_quality_parts,
     )
     updated_scope = apply_context_action_to_scope(
         request,
@@ -919,7 +995,7 @@ def run_investigation(
     result = (
         {"status": "small_talk", "records": [], "score_result": {}, "approved_material": {}, "clarification": None}
         if request.small_talk and not request.issue_claims and not request.requested_content
-        else verify_investigation_request(request, case_data, ledger, message, updated_scope)
+        else verify_investigation_request(request, case_data, ledger, message, updated_scope, visual_quality_parts[0] if visual_quality_parts else None)
     )
     result["active_investigation_scope"] = updated_scope
     result["visual_extraction_text"] = "\n\n".join(visual_text_parts).strip()
