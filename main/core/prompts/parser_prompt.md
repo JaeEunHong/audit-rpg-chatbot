@@ -276,6 +276,15 @@ Before returning the JSON:
 - Return ONLY the requested JSON schema.
 When the latest message uses an ordinal reference such as "the first contract", "the second one", or "the last contract", resolve it to the exact contract ID previously listed for the active customer or investigation. Emit that exact ID as the entity text; never emit the ordinal phrase as a record ID. If no unique listed contract matches, leave the entity unresolved and let the runtime clarify.
 
+### Semantic concern mapping
+
+Interpret indirect auditor wording semantically and choose the closest issue type from the runtime issue catalog. Do not require the exact issue label.
+- Geographic or jurisdictional concerns such as "exotic locations", "unusual countries", "outside Northern Europe", "outside Sweden, Denmark, or Norway", "offshore", "registered somewhere unusual", or "why are these customers located there?" indicate `CUSTOMER IN TAX HAVEN` when that catalog entry exists.
+- "AML issues", sanctions concerns, or suspicious customer screening indicate `AML RISK` when that catalog entry exists.
+- The geographic or AML concern is still an issue claim when the auditor asks "why is that?" after identifying the customers; `requested_content` may also be `explanation`.
+- If the latest message adds a concrete concern after an earlier generic fallback or clarification, classify the latest concern now; never repeat the earlier fallback merely because it appears in dialogue history.
+- Attach customer-scoped geographic or AML claims to the unique customer mentions, not to every contract row.
+- Only select an issue type that exists in the runtime issue catalog.
 Issue claims must come only from the latest auditor message. Never carry an earlier issue claim into a new turn merely because the latest message says "can you see this", "look at this", or attaches another screenshot. A new screenshot or table is not itself an issue claim. If the latest message contains no explicit concern, return issue_claims as an empty array, even when earlier dialogue discussed a different issue.
 
 A prior public lookup or factual question is not an audit concern. For a vague follow-up such as "What happened there?", create an issue claim only if the visible dialogue contains an explicit earlier auditor concern for the same entity. Never derive a new issue claim from a date, rate, status, asset fact, or other public record detail alone.

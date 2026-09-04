@@ -182,6 +182,30 @@ def pre_extracted_entities_from_visual_table(
 
     return entities
 
+
+def audit_request_from_value(value: dict[str, Any]) -> AuditRequest:
+    return AuditRequest(
+        entity_mentions=list(value.get("entity_mentions") or []),
+        requested_access=value.get("requested_access"),
+        requested_content=value.get("requested_content"),
+        issue_claims=list(value.get("issue_claims") or []),
+        follow_active_context=bool(value.get("follow_active_context")),
+        small_talk=bool(value.get("small_talk")),
+        context_action=str(value.get("context_action") or "follow"),
+    )
+
+
+def parser_review_required(
+    request: AuditRequest,
+    case_data: dict[str, Any],
+    message: str,
+) -> bool:
+    if not request.entity_mentions or request.small_talk:
+        return False
+    if request.requested_content not in {"explanation", "policy"}:
+        return False
+    explicit_refs = resolve_record_references_from_text(case_data, message).get("refs", [])
+    return not request.issue_claims or not explicit_refs
 def parse_investigation_request(
     message: str,
     case_data: dict[str, Any],
@@ -310,17 +334,39 @@ the table, or omit rows after the first few.        """
     raw = response_text(response)
     if not raw:
         raise RuntimeError("Parser returned no structured output.")
-    value = json.loads(raw)
-    return AuditRequest(
-        entity_mentions=list(value.get("entity_mentions") or []),
-        requested_access=value.get("requested_access"),
-        requested_content=value.get("requested_content"),
-        issue_claims=list(value.get("issue_claims") or []),
-        follow_active_context=bool(value.get("follow_active_context")),
-        small_talk=bool(value.get("small_talk")),
-        context_action=str(value.get("context_action") or "follow"),
-    )
+    request = audit_request_from_value(json.loads(raw))
+    if parser_review_required(request, case_data, message):
+        review_instructions = prompt + """
 
+PARSER REVIEW GATE:
+The previous JSON is only a draft. Reconsider the latest Auditor message semantically before returning JSON.
+Do not copy a previous Mikael fallback or clarification. If the latest message contains a concrete audit concern,
+map it to the closest issue type in the runtime issue catalog and attach it to the relevant existing entity mentions.
+If the latest message is only a lookup, visibility check, or genuinely vague statement, keep issue_claims empty.
+When the latest message has no explicit record reference and uses pronouns such as "it", "that", or "your policy", bind the concern and target to the immediately preceding Auditor concern. Do not select every row from the visual table and do not revive an older issue from history.
+Return the complete corrected audit_request JSON.
+"""
+        review_input = [{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Latest Auditor message:\n" + message},
+                {"type": "input_text", "text": "Recent visible dialogue:\n" + (format_previous_visible_dialogue(chat_history, message) or "(none)")},
+                {"type": "input_text", "text": "Visual extraction table:\n" + (visual_entity_text or "(none)")},
+                {"type": "input_text", "text": "Active investigation scope:\n" + json.dumps(active_investigation_scope or {"contracts": [], "customers": [], "assets": [], "vins": []}, ensure_ascii=False)},
+                {"type": "input_text", "text": "Initial parser draft:\n" + json.dumps(request.__dict__, ensure_ascii=False)},
+            ],
+        }]
+        review_response = client.responses.create(
+            model=PARSER_MODEL,
+            instructions=review_instructions,
+            input=review_input,
+            text={"format": schema},
+            max_output_tokens=10000,
+        )
+        review_raw = response_text(review_response)
+        if review_raw:
+            request = audit_request_from_value(json.loads(review_raw))
+    return request
 
 def apply_context_action_to_scope(
     request: AuditRequest,
@@ -857,21 +903,7 @@ def run_investigation(
         case_data,
         active_investigation_scope,
     )
-    if visual_text_parts:
-        visual_resolution = resolve_record_references_from_text(
-            case_data,
-            "\n\n".join(visual_text_parts),
-        )
-        visual_scope = {
-            "contracts": list(visual_resolution.get("contracts", [])),
-            "customers": list(visual_resolution.get("customers", [])),
-            "assets": [],
-            "vins": [],
-        }
-        for kind in ("contracts", "customers"):
-            for ref in visual_scope[kind]:
-                if ref not in updated_scope[kind]:
-                    updated_scope[kind].append(ref)
+
     explicit_refs = normalize_ref_list(
         case_data,
         resolve_record_references_from_text(case_data, message).get("refs", []),
