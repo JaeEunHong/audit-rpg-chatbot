@@ -24,3 +24,5 @@ class ResponseContext:
     score_result: dict[str, Any]
     approved_material: dict[str, Any]
     clarification: str | None
+    clarification_kind: str | None = None
+    clarification_candidates: list[str] | None = None

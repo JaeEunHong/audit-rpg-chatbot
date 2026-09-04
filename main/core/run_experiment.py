@@ -631,12 +631,11 @@ def verify_investigation_request(
             "approved_material": {},
         }
     if ambiguous or missing or not resolved:
-        clarification = "Name a concrete contract or customer and state what looks unusual."
-        if ambiguity_refs:
-            clarification = "You mean " + ", or ".join(ambiguity_refs) + "?"
         return {
             "status": "clarification",
-            "clarification": clarification,
+            "clarification": None,
+            "clarification_kind": "ambiguous_entity" if ambiguous else ("missing_entity" if request.issue_claims else "missing_entity_and_issue"),
+            "clarification_candidates": ambiguity_refs,
             "records": [],
             "score_result": {},
             "approved_material": {},
@@ -726,12 +725,10 @@ def verify_investigation_request(
             "approved_material": {},
         }
     if not claims:
-        clarification = "Give me the specific contract ID and the concern you want checked."
-        if unresolved_claims:
-            clarification = "I cannot check that across the whole customer book. Give me the contract ID and the concern together."
         return {
             "status": "needs_contract_examples" if unresolved_claims else "clarification",
-            "clarification": clarification,
+            "clarification": None,
+            "clarification_kind": "missing_entity" if unresolved_claims else "missing_issue",
             "records": response_records,
             "score_result": {},
             "approved_material": {},
@@ -869,6 +866,8 @@ def build_response_context(result: dict[str, Any]) -> ResponseContext:
         score_result=score_result,
         approved_material=result.get("approved_material", {}),
         clarification=result.get("clarification"),
+        clarification_kind=result.get("clarification_kind"),
+        clarification_candidates=result.get("clarification_candidates"),
     )
 
 def generate_mikael_response(
