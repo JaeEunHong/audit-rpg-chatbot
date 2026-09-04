@@ -386,14 +386,14 @@ The previous JSON is only a draft. Reconsider the latest Auditor message semanti
 Do not copy a previous Mikael fallback or clarification. If the latest message contains a concrete audit concern,
 map it to the closest issue type in the runtime issue catalog and attach it to the relevant existing entity mentions.
 If the latest message is only a lookup, visibility check, or genuinely vague statement, keep issue_claims empty.
-When the latest message has no explicit record reference and uses pronouns such as "it", "that", or "your policy", bind the concern and target to the immediately preceding Auditor concern. Do not select every row from the visual table and do not revive an older issue from history.
+When the latest message has no explicit record reference and uses pronouns such as "it", "that", or "your policy", bind the concern and target only to the immediately preceding Auditor concern shown in the supplied exchange. Do not use an older issue from the broader conversation, do not select every row from the visual table, and do not revive a previously scored issue.
 Return the complete corrected audit_request JSON.
 """
         review_input = [{
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "Latest Auditor message:\n" + message},
-                {"type": "input_text", "text": "Recent visible dialogue:\n" + (format_previous_visible_dialogue(chat_history, message) or "(none)")},
+                {"type": "input_text", "text": "Immediately preceding visible exchange only:\\n" + (format_previous_visible_dialogue(chat_history, message, max_messages=2) or "(none)")},
                 {"type": "input_text", "text": "Visual extraction table:\n" + (visual_entity_text or "(none)")},
                 {"type": "input_text", "text": "Active investigation scope:\n" + json.dumps(active_investigation_scope or {"contracts": [], "customers": [], "assets": [], "vins": []}, ensure_ascii=False)},
                 {"type": "input_text", "text": "Initial parser draft:\n" + json.dumps(request.__dict__, ensure_ascii=False)},
