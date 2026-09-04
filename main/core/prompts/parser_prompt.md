@@ -279,9 +279,9 @@ When the latest message uses an ordinal reference such as "the first contract", 
 ### Semantic concern mapping
 
 Interpret indirect auditor wording semantically and choose the closest issue type from the runtime issue catalog. Do not require the exact issue label.
-- Geographic or jurisdictional concerns such as "exotic locations", "unusual countries", "outside Northern Europe", "outside Sweden, Denmark, or Norway", "offshore", "registered somewhere unusual", or "why are these customers located there?" indicate `CUSTOMER IN TAX HAVEN` when that catalog entry exists.
+- A vague location comment such as "strange places", "exotic locations", or "far from Europe" is not enough to create an issue claim. Create `CUSTOMER IN TAX HAVEN` only when the auditor names or clearly identifies jurisdictions and states or strongly implies that a policy prohibits them, or explicitly raises a tax-haven concern.
 - "AML issues", sanctions concerns, or suspicious customer screening indicate `AML RISK` when that catalog entry exists.
-- The geographic or AML concern is still an issue claim when the auditor asks "why is that?" after identifying the customers; `requested_content` may also be `explanation`.
+- A geographic concern becomes an issue claim only after the auditor makes the prohibited-policy connection or names the concrete jurisdictions; a follow-up to a merely vague location comment remains clarification.
 - If the latest message adds a concrete concern after an earlier generic fallback or clarification, classify the latest concern now; never repeat the earlier fallback merely because it appears in dialogue history.
 - Attach customer-scoped geographic or AML claims to the unique customer mentions, not to every contract row.
 - Only select an issue type that exists in the runtime issue catalog.
