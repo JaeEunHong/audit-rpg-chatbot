@@ -643,6 +643,10 @@ body,
     background: var(--audit-panel);
     border-right: 1px solid rgba(221, 216, 207, 0.95);
 }
+[data-testid="stExpander"] pre {
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+}
 [data-testid="stSidebar"] > div {
     padding-top: 34px;
 }
