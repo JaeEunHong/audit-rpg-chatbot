@@ -1026,6 +1026,8 @@ def render_activity(events: list[dict[str, Any]]) -> None:
     before = debug.get("before", {})
     after = debug.get("after", {})
     scoring = debug.get("scoring") or {}
+    evidence = debug.get("evidence")
+    evidence_label = "none" if evidence is None else json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
     lines = [
         "======================================",
         f'USER: "{debug.get("message", "")}"',
@@ -1033,6 +1035,8 @@ def render_activity(events: list[dict[str, Any]]) -> None:
         f"[entity]     {before.get('focus_entities')}  ->  {after.get('focus_entities')}",
         f"[topic]      {before.get('focus_topic')}  ->  {after.get('focus_topic')}",
         f"[confirm]    {before.get('pending_confirmation')}  ->  {after.get('pending_confirmation')}",
+        f"[action]     {debug.get('action') or 'not run'}",
+        f"[evidence]   {evidence_label}",
         f"[raw_data]   {'reused' if before.get('last_raw_data') else 'not reused'}",
         f"[score]      {scoring.get('status', 'not run')}  score={scoring.get('score', 0)}  delta={scoring.get('score_delta', 0)}  ledger_entries={len(st.session_state.score_ledger)}",
         "--------------------------------------",
@@ -1358,7 +1362,7 @@ def render_audit_page() -> None:
                 )
                 status_slot.empty()
             except Exception as exc:
-                reply = f"[MOOD:Annoyed / Dismissive]\nI cannot answer while the model connection is failing: {exc}"
+                reply = "[MOOD:Guarded / Hesitant]\nSorry, I didn’t catch that. Could you say it again?"
                 events = []
                 updated_scope = {}
                 status_slot.markdown(render_chat_status("Mikael cannot reach the case file."), unsafe_allow_html=True)

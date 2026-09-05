@@ -144,7 +144,8 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         ledger=ledger,
     )
     result["evidence"] = _evidence(result, graph)
-    result["action"] = result.get("action") or result.get("request", {}).get("requested_action")
+    request = result.get("request") or {}
+    result["action"] = result.get("action") or request.get("requested_action")
     if result.get("action") == "small_talk":
         result["reply"] = "I understand."
         result["visual_extraction_text"] = image_text or ""
@@ -160,13 +161,13 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
     reply_context = {"latest_auditor_message": message, "evidence": result["evidence"]}
     serialized_context = json.dumps(reply_context, ensure_ascii=False)
     if len(serialized_context) > MAX_GENERATOR_CONTEXT_CHARS:
-        result["reply"] = "I have too much detail in this set to review reliably at once. Please narrow it to a smaller group of entities."
+        result["reply"] = "I have too much detail here to review reliably at once. Could you narrow it down to a smaller group of records?"
         result["visual_extraction_text"] = image_text or ""
         return result
     try:
         generated = json.loads(_generator_call(reply_context))
     except (json.JSONDecodeError, TypeError):
-        result["reply"] = "I have too much detail in this set to review reliably at once. Please narrow it to a smaller group of entities."
+        result["reply"] = "Sorry, I didn’t catch that. Could you say it again?"
         result["visual_extraction_text"] = image_text or ""
         return result
     result["reply"] = str(generated.get("speech") or "").strip()
