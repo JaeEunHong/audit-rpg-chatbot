@@ -18,6 +18,7 @@ PARSER_PROMPT = ROOT / "prompts" / "stage_03_request_parser_prompt.md"
 GENERATOR_PROMPT = ROOT / "prompts" / "stage_07_response_generator_prompt.md"
 PARSER_MODEL = "gpt-4.1"
 GENERATOR_MODEL = "gpt-4.1-mini"
+MAX_GENERATOR_CONTEXT_CHARS = 12000
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -47,7 +48,7 @@ def _parser_call(**payload: Any) -> str:
         instructions=PARSER_PROMPT.read_text(encoding="utf-8"),
         input=json.dumps(payload, ensure_ascii=False),
         text={"format": PARSER_SCHEMA},
-        max_output_tokens=6000,
+        max_output_tokens=10000,
     )
     return response.output_text or "{}"
 
@@ -68,25 +69,59 @@ def _generator_call(context: dict[str, Any]) -> str:
         instructions=GENERATOR_PROMPT.read_text(encoding="utf-8"),
         input=json.dumps(context, ensure_ascii=False),
         text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}}, "required": ["speech"]}}},
-        max_output_tokens=1200,
+        max_output_tokens=500,
     )
     return response.output_text or "{}"
 
 
-def _reply_data(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any]:
+def _narrowing_reply(result: dict[str, Any], graph: dict[str, Any]) -> str | None:
+    filtered = result.get("filtered_data", {})
+    contracts = list(filtered.get("contracts", []))
+    customers = list(filtered.get("customers", []))
+    if len(contracts) <= 60 and len(customers) <= 10:
+        return None
+    if contracts:
+        return f"I have {len(contracts)} contracts in this set. I can check them, but not all at once. Please narrow it to a smaller group of contract IDs."
+    return f"I have {len(customers)} customers in this set. I can check them, but not all at once. Please narrow it to a smaller group of customer IDs."
+
+
+def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] | None:
+    if result.get("action") == "small_talk" or result.get("state") == "small_talk":
+        return None
     filtered = result.get("filtered_data", {})
     scoring = result.get("scoring") or {}
-    data: dict[str, Any] = {"status": scoring.get("status") or result.get("status")}
+    contracts = list(filtered.get("contracts", []))
+    customers = list(filtered.get("customers", []))
+    issues = filtered.get("customer_concerns", []) + filtered.get("contract_concerns", [])
+    data: dict[str, Any] = {
+        "status": scoring.get("status") or result.get("status"),
+        "action": result.get("action") or result.get("request", {}).get("requested_action"),
+        "contract_count": len(contracts),
+        "customer_count": len(customers),
+        "contract_ids_sample": contracts[:5],
+        "customer_names": [
+            graph.get("customers", {}).get(i, {}).get("customer_name", "")
+            for i in customers[:10]
+        ],
+    }
     if scoring:
-        data["score_result"] = {"status": scoring.get("status"), "score": scoring.get("score", 0), "score_delta": scoring.get("score_delta", 0), "findings": scoring.get("findings", [])}
+        findings = scoring.get("findings", [])
+        data["score_result"] = {
+            "status": scoring.get("status"),
+            "score": scoring.get("score", 0),
+            "score_delta": scoring.get("score_delta", 0),
+            "finding_count": len(findings),
+            "finding_sample": findings[:3],
+        }
     data["requested_issue"] = (result.get("request") or {}).get("requested_concerns", [])
     data["missing"] = result.get("missing", [])
     data["clarification_type"] = result.get("clarification_type")
-    data["customers"] = [{"id": i, "name": graph.get("customers", {}).get(i, {}).get("customer_name", "")} for i in filtered.get("customers", [])]
-    data["contracts"] = [{"id": i} for i in filtered.get("contracts", [])]
-    issues = filtered.get("customer_concerns", []) + filtered.get("contract_concerns", [])
     if issues:
-        data["issues"] = issues
+        data["issues"] = [{
+            "name": item.get("name"),
+            "confirmed": item.get("confirmed"),
+            "explanation": item.get("explanation_for_auditor"),
+        } for item in issues[:10]]
     return data
 
 
@@ -108,9 +143,32 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         image_text=image_text,
         ledger=ledger,
     )
+    result["evidence"] = _evidence(result, graph)
+    result["action"] = result.get("action") or result.get("request", {}).get("requested_action")
+    if result.get("action") == "small_talk":
+        result["reply"] = "I understand."
+        result["visual_extraction_text"] = image_text or ""
+        return result
+    narrowing_reply = _narrowing_reply(result, graph)
+    if narrowing_reply:
+        result["scoring"] = None
+        result["reply"] = narrowing_reply
+        result["visual_extraction_text"] = image_text or ""
+        return result
     if status_callback:
         status_callback("Mikael is typing...")
-    generated = json.loads(_generator_call({"latest_auditor_message": message, "python_result": _reply_data(result, graph)}))
+    reply_context = {"latest_auditor_message": message, "evidence": result["evidence"]}
+    serialized_context = json.dumps(reply_context, ensure_ascii=False)
+    if len(serialized_context) > MAX_GENERATOR_CONTEXT_CHARS:
+        result["reply"] = "I have too much detail in this set to review reliably at once. Please narrow it to a smaller group of entities."
+        result["visual_extraction_text"] = image_text or ""
+        return result
+    try:
+        generated = json.loads(_generator_call(reply_context))
+    except (json.JSONDecodeError, TypeError):
+        result["reply"] = "I have too much detail in this set to review reliably at once. Please narrow it to a smaller group of entities."
+        result["visual_extraction_text"] = image_text or ""
+        return result
     result["reply"] = str(generated.get("speech") or "").strip()
     result["visual_extraction_text"] = image_text or ""
     return result

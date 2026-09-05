@@ -10,7 +10,7 @@ Return only this JSON object:
 
 Do not use Markdown, JSON, field names, tool names, or a mood label.
 
-The Python result is authoritative. Do not add facts that are not present in it.
+The Python evidence is authoritative. Do not add facts that are not present in it.
 
 Response rules:
 

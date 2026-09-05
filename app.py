@@ -60,7 +60,7 @@ def run_agent_turn(
     if result.get("request"):
         events.append({"tool": "llm1_parser", "output": result["request"]})
     events.append({"tool": "python_flow", "output": {"status": result.get("status"), "scoring": result.get("scoring")}})
-    score_result = result.get("score_result") or {}
+    score_result = result.get("scoring") or result.get("score_result") or {}
     if score_result.get("findings"):
         events.append({"tool": "update_score", "output": score_result})
     state_after = result.get("conversation_state")
@@ -69,6 +69,8 @@ def run_agent_turn(
         "message": str(latest_user.get("content") or ""),
         "before": state_before,
         "after": state_after,
+        "action": result.get("action"),
+        "evidence": result.get("evidence"),
         "scoring": score_result,
         "reply": result["reply"],
     }})
@@ -1254,7 +1256,7 @@ def toast_audit_notes(notes: list[dict]) -> None:
         detail = short_issue_label(note.get("issue_type", "finding")).capitalize()
         if refs:
             detail += f" \u00b7 {refs}"
-        st.toast(f"Finding added: {detail}", icon=":material/check_circle:", duration="long")
+        st.toast(f"Findings added +{delta}: {detail}", icon="🔍", duration="long")
 
 
 def queue_audit_note_toasts(notes: list[dict]) -> None:

@@ -11,6 +11,9 @@ from stage_06_scoring import score_entities
 from conversation_state import ConversationState
 
 
+ACKNOWLEDGEMENTS = {"ok", "okay", "thanks", "thank you", "bummer", "right", "i see", "got it"}
+
+
 def run_conversation_turn(
     message: str,
     case_data: dict[str, Any],
@@ -25,6 +28,17 @@ def run_conversation_turn(
 ) -> dict[str, Any]:
     """Parse one auditor turn and return filtered data or clarification."""
     state_memory = conversation_state or ConversationState()
+    if message.strip().casefold().rstrip(".!?") in ACKNOWLEDGEMENTS:
+        return {
+            "status": "acknowledged",
+            "state": "small_talk",
+            "action": "small_talk",
+            "evidence": None,
+            "request": {"mentioned_entities": [], "requested_concerns": [], "requested_action": None},
+            "scoring": None,
+            "filtered_data": {},
+            "conversation_state": state_memory,
+        }
     parsed = parse_conversation_request(
         message,
         parser_call,
@@ -52,6 +66,16 @@ def run_conversation_turn(
         request.get("requested_concerns", []),
         sorted(case_data.get("concern_catalog", {})),
     )
+    contract_count = len(filtered.get("contracts", []))
+    customer_count = len(filtered.get("customers", []))
+    if state.get("status") == "ready_for_scoring" and (contract_count > 60 or customer_count > 10):
+        state = {
+            "status": "clarification",
+            "state": "scope_too_large",
+            "missing": ["smaller_scope"],
+            "clarification_type": "scope_too_large",
+            "options": [],
+        }
     scoring = None
     if ledger is not None and state.get("state") == "ready_for_scoring":
         scoring = score_entities(
