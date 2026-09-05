@@ -553,10 +553,10 @@ body,
 }
 .chat-shot {
     display: block;
-    width: min(280px, 100%) !important;
-    max-width: 280px !important;
+    width: min(160px, 100%) !important;
+    max-width: 160px !important;
     height: auto !important;
-    max-height: 190px;
+    max-height: 110px;
     object-fit: contain;
     object-position: left top;
     border-radius: 7px;
@@ -1314,7 +1314,18 @@ def render_audit_page() -> None:
     with left_col:
         render_mikael_panel(portrait_mood, interview_started or processing_turn)
         render_interview_status(st.session_state.current_mood, initial=not interview_started and not processing_turn)
-        st.markdown('<div class="screenshot-guidance">For screenshots, include only the relevant Contract IDs and Customer IDs.</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="screenshot-guidance">'
+            '<strong>Build your case</strong><br>'
+            'Pick one policy concern and gather the contracts or customers that support it. '
+            'If the scope gets too broad, Mikael may ask you to narrow it down.<br><br>'
+            'In each message, state one concern clearly and bring the records behind it. There is no strict limit, '
+            'but around 30 records tends to work best.<br><br>'
+            'Too many unrelated records only slow the review down. For screenshots, include the '
+            'Contract IDs and Customer IDs that matter.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     with chat_col:
         st.markdown("<div class='play-area-label'>Interview</div>", unsafe_allow_html=True)

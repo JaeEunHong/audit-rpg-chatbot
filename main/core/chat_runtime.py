@@ -78,7 +78,7 @@ def _narrowing_reply(result: dict[str, Any], graph: dict[str, Any]) -> str | Non
     filtered = result.get("filtered_data", {})
     contracts = list(filtered.get("contracts", []))
     customers = list(filtered.get("customers", []))
-    if len(contracts) <= 60 and len(customers) <= 10:
+    if len(contracts) <= 50 and (contracts or len(customers) <= 50):
         return None
     if contracts:
         return f"I have {len(contracts)} contracts in this set. I can check them, but not all at once. Please narrow it to a smaller group of contract IDs."

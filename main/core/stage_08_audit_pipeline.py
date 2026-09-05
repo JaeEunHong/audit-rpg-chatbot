@@ -68,7 +68,9 @@ def run_conversation_turn(
     )
     contract_count = len(filtered.get("contracts", []))
     customer_count = len(filtered.get("customers", []))
-    if state.get("status") == "ready_for_scoring" and (contract_count > 60 or customer_count > 10):
+    too_many_contracts = contract_count > 50
+    too_many_customers = not contract_count and customer_count > 50
+    if state.get("status") == "ready_for_scoring" and (too_many_contracts or too_many_customers):
         state = {
             "status": "clarification",
             "state": "scope_too_large",
