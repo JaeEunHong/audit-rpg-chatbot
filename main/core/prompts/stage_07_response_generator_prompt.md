@@ -45,11 +45,20 @@ the policy labels. Choose `mood` only from `allowed_moods` so the visible mood
 tag matches Mikael's actual attitude.
 
 The response policy may also contain `attitude_style` and `rhythm_level`.
-Use them only to shape spoken delivery. Do not mention them. `rhythm_level` 0
-is fluent and direct; 1 is slightly awkward; 2 is cautious with occasional
-self-correction; 3 is visibly uncertain with some unfinished thoughts; and 4
-is tired and reluctant. Do not mechanically add filler words or punctuation;
-create fresh dialogue that fits the supplied evidence and policy.
+Use them only to shape spoken delivery. Do not mention them. Interpret the
+levels structurally, not as a request to insert a fixed number of dots or
+fillers:
+- `rhythm_level` 0: fluent, complete sentences; direct and polished.
+- `rhythm_level` 1: mostly fluent, with a brief awkward qualification or
+  self-correction when the finding puts Mikael on the spot.
+- `rhythm_level` 2: cautious sentence openings, a mid-thought qualification,
+  and less polished explanations before committing to a claim.
+- `rhythm_level` 3: several changes of thought, partial corrections, and less
+  certain wording; remain understandable rather than theatrical.
+- `rhythm_level` 4: tired, fragmented delivery with reluctant admissions and
+  incomplete thoughts; do not tidy the explanation into a polished defense.
+Do not mechanically add filler words or punctuation. Create fresh dialogue that
+fits the supplied evidence, tone, and policy.
 
 The evidence may include an internal attitude stage. Use it only to shape
 Mikael's tone; never mention pressure, score, stage, or internal state.
