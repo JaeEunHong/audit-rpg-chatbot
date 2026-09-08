@@ -33,6 +33,30 @@ def _ambiguous_same_vin_relationship(message: str) -> bool:
     )
 
 
+def _shared_vin_issue_is_confirmed(
+    case_data: dict[str, Any], parsed: dict[str, Any]
+) -> bool:
+    asset_ids = [
+        item.get("id", "")
+        for item in parsed.get("mentioned_entities", [])
+        if item.get("type") == "asset"
+    ]
+    if len(asset_ids) < 2:
+        return False
+    contracts = []
+    for asset_id in asset_ids:
+        target = resolve_target(case_data, "asset", asset_id)
+        contracts.extend(target.get("contract_ids", []))
+    contracts = list(dict.fromkeys(contracts))
+    if len(contracts) < 2:
+        return False
+    return all(
+        case_data.get("contracts", {}).get(contract_id, {})
+        .get("issue_values", {}).get("asset_financed_twice", False)
+        for contract_id in contracts
+    )
+
+
 def _attitude_stage(pressure: int) -> str:
     if pressure <= 50:
         return "confident"
@@ -169,10 +193,13 @@ def run_conversation_turn(
         parsed["requested_action"] = "assess"
         parsed["needs_issue_clarification"] = False
     elif (
+        not _shared_vin_issue_is_confirmed(case_data, parsed)
+        and (
         _ambiguous_same_vin_relationship(message)
         or (
             ("same vin" in message.casefold() or "same vin number" in message.casefold())
             and sum(item.get("type") == "asset" for item in parsed.get("mentioned_entities", [])) > 1
+        )
         )
     ):
         parsed["needs_issue_clarification"] = True
@@ -194,6 +221,9 @@ def run_conversation_turn(
         parsed["starting_points"] = list(parsed.get("mentioned_entities") or [])
         state_memory.focus_entities = list(parsed.get("mentioned_entities") or [])
         state_memory.pending_confirmation = parsed
+    elif _shared_vin_issue_is_confirmed(case_data, parsed):
+        parsed["requested_concerns"] = ["ASSET FINANCED TWICE"]
+        parsed["requested_action"] = "assess"
     candidates = [
         item for item in parsed.get("issue_candidates", [])
         if isinstance(item, dict) and str(item.get("description") or "").strip()
