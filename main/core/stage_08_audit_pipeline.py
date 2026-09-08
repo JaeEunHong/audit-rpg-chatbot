@@ -15,15 +15,6 @@ from conversation_state import ConversationState
 ACKNOWLEDGEMENTS = {"ok", "okay", "thanks", "thank you", "bummer", "right", "i see", "got it"}
 
 
-def _explicit_asset_double_financing(message: str) -> bool:
-    text = str(message or "").casefold()
-    return (
-        ("financ" in text and "twice" in text)
-        or "double financing" in text
-        or "financed more than once" in text
-    )
-
-
 def _attitude_stage(pressure: int) -> str:
     if pressure <= 50:
         return "confident"
@@ -153,18 +144,6 @@ def run_conversation_turn(
             "filtered_data": {},
             "conversation_state": state_memory,
         }
-    # Keep an explicit double-financing claim from being hijacked by the
-    # previous turn's issue when the conversation contains a large scope.
-    if _explicit_asset_double_financing(message):
-        parsed["requested_concerns"] = ["ASSET FINANCED TWICE"]
-        parsed["requested_action"] = "assess"
-        parsed["needs_issue_clarification"] = False
-    elif (
-        ("same vin" in message.casefold() or "same vin number" in message.casefold())
-        and sum(item.get("type") == "asset" for item in parsed.get("mentioned_entities", [])) > 1
-    ):
-        parsed["requested_concerns"] = ["ASSET FINANCED TWICE"]
-        parsed["requested_action"] = "assess"
     candidates = [
         item for item in parsed.get("issue_candidates", [])
         if isinstance(item, dict) and str(item.get("description") or "").strip()
