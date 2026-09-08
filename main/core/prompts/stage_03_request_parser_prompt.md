@@ -23,6 +23,8 @@ every distinct explicit ID, even when the message also contains an issue
 question. Keep each ID as its original type. Do not copy IDs from older
 messages into `entities`. Never return an empty `entities` array when the
 current message visibly contains an ID.
+The `explicit_entities` field is extracted by Python from the current input.
+Treat it as authoritative and return every item in it unchanged.
 Do not follow graph relationships; Python will do that.
 
 Resolve conversational references such as "this customer", "that contract",

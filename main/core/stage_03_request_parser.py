@@ -13,6 +13,24 @@ REQUEST_TYPES = {"new", "continue"}
 REQUEST_ACTIONS = {"overview", "lookup", "explain", "assess", "compare", "small_talk"}
 
 
+def extract_explicit_entities(text: str) -> list[dict[str, str]]:
+    patterns = (
+        ("customer", r"\bCUST\s*\d{1,4}\b"),
+        ("contract", r"\bSE\s*\d{6}\b"),
+        ("asset", r"\bAST\s*\d{6}\b"),
+        ("vin", r"\b[A-HJ-NPR-Z0-9]{17}\b"),
+    )
+    entities = []
+    seen = set()
+    for kind, pattern in patterns:
+        for match in re.finditer(pattern, str(text or ""), re.IGNORECASE):
+            entity_id = normalize_compact_id(match.group(0))
+            if (kind, entity_id) not in seen:
+                entities.append({"type": kind, "id": entity_id})
+                seen.add((kind, entity_id))
+    return entities
+
+
 def parse_conversation_request(
     message: str,
     parser_call: Callable[..., str],
@@ -24,8 +42,13 @@ def parse_conversation_request(
     image_text: str | None = None,
 ) -> dict[str, Any]:
     """Parse an auditor message with bounded conversation context."""
+    explicit_entities = extract_explicit_entities(message)
+    for entity in extract_explicit_entities(image_text or ""):
+        if entity not in explicit_entities:
+            explicit_entities.append(entity)
     parser_payload = dict(
         current_message={"speaker": "auditor", "content": message},
+        explicit_entities=explicit_entities,
         latest_messages=latest_messages[-3:],
         active_context=active_context or {},
         pending_request=pending_request or {},
@@ -56,23 +79,16 @@ def parse_conversation_request(
     if raw_entities is None:
         raw_entities = value.get("mentioned_entities")
     raw_entities = list(raw_entities or [])
-    explicit_patterns = (
-        ("customer", r"\bCUST\s*\d{1,4}\b"),
-        ("contract", r"\bSE\s*\d{6}\b"),
-        ("asset", r"\bAST\s*\d{6}\b"),
-        ("vin", r"\b[A-HJ-NPR-Z0-9]{17}\b"),
-    )
     existing_ids = {
         normalize_compact_id(item.get("id") or "")
         for item in raw_entities
         if isinstance(item, dict)
     }
-    for kind, pattern in explicit_patterns:
-        for match in re.finditer(pattern, message, re.IGNORECASE):
-            entity_id = normalize_compact_id(match.group(0))
-            if entity_id not in existing_ids:
-                raw_entities.append({"type": kind, "id": entity_id})
-                existing_ids.add(entity_id)
+    for item in explicit_entities:
+        entity_id = item["id"]
+        if entity_id not in existing_ids:
+            raw_entities.append(item)
+            existing_ids.add(entity_id)
     for item in raw_entities:
         kind = str(item.get("type") or "").lower()
         entity_id = normalize_compact_id(item.get("id") or "")
