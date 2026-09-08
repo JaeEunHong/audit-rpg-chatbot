@@ -5,12 +5,25 @@ import re
 from copy import deepcopy
 from typing import Any, Callable
 
-from audit_types import AuditRequest
+from audit_types import AuditRequest, ResolvedRequest
 from stage_01_case_data import normalize_compact_id
 
 
 REQUEST_TYPES = {"new", "continue"}
 REQUEST_ACTIONS = {"overview", "lookup", "explain", "assess", "compare", "small_talk"}
+
+
+def resolved_request_from_dict(request: dict[str, Any]) -> ResolvedRequest:
+    """Create the Phase A value object from the compatibility request dict."""
+    return ResolvedRequest(
+        entities=list(request.get("starting_points") or request.get("mentioned_entities") or []),
+        action=request.get("requested_action"),
+        concerns=list(request.get("requested_concerns") or []),
+        issue_candidates=list(request.get("issue_candidates") or []),
+        selection=request.get("selection"),
+        continuation=request.get("request_type") == "continue",
+        clarification=(request.get("missing") or [None])[0],
+    )
 
 
 def extract_explicit_entities(text: str) -> list[dict[str, str]]:

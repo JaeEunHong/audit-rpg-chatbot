@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from audit_types import SelectedData
+
 from stage_01_case_data import contract_id_from_record, contracts_for_customer, normalize_compact_id, normalize_key
 
 
@@ -191,6 +193,18 @@ def filter_related_data(
         "customer_concerns": customer_concerns,
         "contract_concerns": contract_concerns,
     }
+
+
+def selected_data_from_filtered(filtered: dict[str, Any]) -> SelectedData:
+    """Create the Phase B value object without rewriting the legacy shape."""
+    return SelectedData(
+        customers=list(filtered.get("customers") or []),
+        contracts=list(filtered.get("contracts") or []),
+        assets=list(filtered.get("assets") or []),
+        vins=list(filtered.get("vins") or []),
+        customer_concerns=list(filtered.get("customer_concerns") or []),
+        contract_concerns=list(filtered.get("contract_concerns") or []),
+    )
 
 
 def expand_conversation_references(

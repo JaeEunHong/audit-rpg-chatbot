@@ -1,18 +1,44 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict
 from typing import Any, Callable
 
 from audit_types import AuditRequest
-from stage_03_request_parser import merge_pending_request, parse_conversation_request
-from stage_04_entity_resolution import expand_conversation_references, filter_related_data, resolve_target
+from audit_types import DecisionResult
+from stage_03_request_parser import (
+    merge_pending_request,
+    parse_conversation_request,
+    resolved_request_from_dict,
+)
+from stage_04_entity_resolution import (
+    expand_conversation_references,
+    filter_related_data,
+    resolve_target,
+    selected_data_from_filtered,
+)
 from stage_05_verification import verify_request
 from stage_05_verification import check_filtered_request
-from stage_06_scoring import resolve_issue_key, score_entities
+from stage_06_scoring import score_entities
 from conversation_state import ConversationState
 
 
-ACKNOWLEDGEMENTS = {"ok", "okay", "thanks", "thank you", "bummer", "right", "i see", "got it"}
+def decision_result_from_scoring(scoring: dict[str, Any] | None) -> DecisionResult:
+    """Create the Phase C value object from the legacy scoring result."""
+    scoring = scoring or {}
+    findings = list(scoring.get("findings") or [])
+    return DecisionResult(
+        status=str(scoring.get("status") or "not_run"),
+        findings=findings,
+        score_delta=int(scoring.get("score_delta") or 0),
+        confirmed_count=sum(
+            item.get("status") in {"new_score", "repeat"} for item in findings
+        ),
+        unsupported_count=sum(
+            item.get("status") == "unsupported" for item in findings
+        ),
+        repeat_count=sum(item.get("status") == "repeat" for item in findings),
+    )
 
 
 def _attitude_stage(pressure: int) -> str:
@@ -30,9 +56,6 @@ def _attitude_stage(pressure: int) -> str:
 def _update_attitude(
     state: ConversationState,
     scoring: dict[str, Any] | None,
-    *,
-    issue_coverage: float = 0.0,
-    portfolio_coverage: float = 0.0,
 ) -> dict[str, Any]:
     before = dict(state.attitude)
     if not scoring:
@@ -59,15 +82,9 @@ def _update_attitude(
     }
     if new_count:
         trigger = "new_score"
-        coverage_multiplier = 1.0 + max(0.0, min(1.0, issue_coverage)) + max(0.0, min(1.0, portfolio_coverage))
-        pressure_delta = round(new_count * coverage_multiplier)
+        pressure_delta = new_count
     elif unsupported_count:
         trigger = "unsupported"
-        unsupported_issue_types = {
-            str(item.get("issue_type") or item.get("issue_key") or "").strip().upper()
-            for item in unsupported_findings
-            if str(item.get("issue_type") or item.get("issue_key") or "").strip()
-        }
         pressure_delta = -min(10, max(1, unsupported_count))
     elif any(item.get("status") == "repeat" for item in findings):
         trigger = "repeat"
@@ -91,8 +108,6 @@ def _update_attitude(
         "new_finding_count": len(new_findings),
         "new_contract_count": new_count,
         "new_issue_type_count": len(issue_types),
-        "issue_coverage": issue_coverage,
-        "portfolio_coverage": portfolio_coverage,
     }
 
 
@@ -116,17 +131,6 @@ def run_conversation_turn(
         for key in ("request_type", "requested_concerns", "requested_action", "missing", "filled_values")
         if pending_for_parser.get(key) is not None
     }
-    if False and message.strip().casefold().rstrip(".!?") in ACKNOWLEDGEMENTS:
-        return {
-            "status": "acknowledged",
-            "state": "small_talk",
-            "action": "small_talk",
-            "evidence": None,
-            "request": {"mentioned_entities": [], "requested_concerns": [], "requested_action": None},
-            "scoring": None,
-            "filtered_data": {},
-            "conversation_state": state_memory,
-        }
     parsed = parse_conversation_request(
         message,
         parser_call,
@@ -195,6 +199,7 @@ def run_conversation_turn(
     request = merge_pending_request(state_memory.pending_confirmation, parsed)
     if request.get("requested_concerns") and request.get("requested_action") in {"overview", "lookup"}:
         request["requested_action"] = "assess"
+    resolved_request = None
     request["starting_points"] = list(request.get("starting_points") or [])
     request["starting_points"].extend(
         {"type": item.get("type"), "id": item.get("id")}
@@ -224,6 +229,7 @@ def run_conversation_turn(
             canonical_points.append(point)
     if canonical_points:
         request["starting_points"] = canonical_points
+    resolved_request = resolved_request_from_dict(request)
     selection = request.get("selection")
     if selection:
         mode = str(selection.get("mode") or "")
@@ -296,6 +302,7 @@ def run_conversation_turn(
                 "conversation_state": state_memory,
             }
     filtered = filter_related_data(case_data, request)
+    selected_data = selected_data_from_filtered(filtered)
     requested_concerns = list(request.get("requested_concerns", []))
     available_concerns = []
     for item in filtered.get("customer_concerns", []) + filtered.get("contract_concerns", []):
@@ -354,12 +361,9 @@ def run_conversation_turn(
         mixed_group = bool({"new_score", "repeat"} & finding_statuses) and "unsupported" in finding_statuses
         if mixed_group and len(request.get("starting_points", [])) > 1:
             scoring = {
-                "status": "unsupported",
+                "status": "mixed_issue",
                 "score_delta": 0,
-                "findings": [
-                    finding for finding in tentative_scoring.get("findings", [])
-                    if finding.get("status") == "unsupported"
-                ],
+                "findings": tentative_scoring.get("findings", []),
             }
             state = {
                 "status": "clarification",
@@ -373,33 +377,7 @@ def run_conversation_turn(
             if scoring_ledger is not ledger:
                 ledger.clear()
                 ledger.update(scoring_ledger)
-    confirmed_contracts = {
-        str(item.get("contract_id") or item.get("record_id") or "")
-        for item in (scoring or {}).get("findings", [])
-        if item.get("status") in {"new_score", "repeat"}
-        and str(item.get("contract_id") or item.get("record_id") or "")
-    }
-    issue_key = resolve_issue_key(
-        case_data,
-        request.get("requested_concerns", [None])[0],
-    ) if request.get("requested_concerns") else None
-    portfolio_matches = {
-        str(contract_id)
-        for contract_id, record in case_data.get("contracts", {}).items()
-        if issue_key and bool(record.get("issue_values", {}).get(issue_key, False))
-    }
-    issue_coverage = (
-        len(confirmed_contracts & portfolio_matches) / len(portfolio_matches)
-        if portfolio_matches else 0.0
-    )
-    all_contract_count = len(case_data.get("contracts", {}))
-    portfolio_coverage = len(confirmed_contracts) / all_contract_count if all_contract_count else 0.0
-    attitude_trace = _update_attitude(
-        state_memory,
-        scoring,
-        issue_coverage=issue_coverage,
-        portfolio_coverage=portfolio_coverage,
-    )
+    attitude_trace = _update_attitude(state_memory, scoring)
     previous_focus_entities = list(state_memory.focus_entities)
     if request.get("starting_points"):
         state_memory.focus_entities = request["starting_points"]
@@ -426,13 +404,17 @@ def run_conversation_turn(
             "issue": current_issue,
         }
     state_memory.pending_confirmation = request if state["status"] == "clarification" else None
+    decision_result = decision_result_from_scoring(scoring)
     return {
         **state,
         "request": request,
+        "resolved_request": resolved_request,
         "scoring": scoring,
+        "decision_result": asdict(decision_result),
         "attitude": state_memory.attitude,
         "attitude_trace": attitude_trace,
         "filtered_data": filtered,
+        "selected_data": asdict(selected_data),
         "conversation_state": state_memory,
     }
 

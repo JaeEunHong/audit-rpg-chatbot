@@ -10,6 +10,7 @@ from typing import Any
 DEFAULT_MODEL = "gpt-4.1-mini"
 MOOD_RE = re.compile(r"^\[MOOD:([^\]]+)\]\s*", re.IGNORECASE)
 MOODS = {
+    "Embarrassed / Caught",
     "Professional / Controlled",
     "Guarded / Hesitant",
     "Defensive / Cornered",
@@ -17,6 +18,7 @@ MOODS = {
     "Annoyed / Dismissive",
 }
 INTERVIEW_STATE_BY_MOOD = {
+    "Embarrassed / Caught": {"mood": "Embarrassed"},
     "Professional / Controlled": {"mood": "Confident"},
     "Guarded / Hesitant": {"mood": "Hesitant"},
     "Defensive / Cornered": {"mood": "Defensive"},

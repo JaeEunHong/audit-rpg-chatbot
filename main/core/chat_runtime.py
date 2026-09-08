@@ -3,14 +3,15 @@ from __future__ import annotations
 import base64
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
 
 from conversation_state import ConversationState
+from audit_types import EvidencePackage
 from stage_02_visual_extraction import extract_visible_entities
-from stage_06_scoring import resolve_issue_key
 from stage_08_audit_pipeline import run_conversation_turn
 
 
@@ -76,7 +77,7 @@ def _generator_call(context: dict[str, Any]) -> str:
         model=os.getenv("AUDIT_GENERATOR_MODEL", GENERATOR_MODEL),
         instructions=GENERATOR_PROMPT.read_text(encoding="utf-8"),
         input=json.dumps(context, ensure_ascii=False),
-        text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}, "mood": {"type": "string", "enum": ["Professional / Controlled", "Guarded / Hesitant", "Defensive / Cornered", "Reluctant / Defeated", "Annoyed / Dismissive"]}, "portrait": {"type": "string", "enum": PORTRAIT_OPTIONS}}, "required": ["speech", "mood", "portrait"]}}},
+        text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}, "mood": {"type": "string", "enum": ["Embarrassed / Caught", "Professional / Controlled", "Guarded / Hesitant", "Defensive / Cornered", "Reluctant / Defeated", "Annoyed / Dismissive"]}, "portrait": {"type": "string", "enum": PORTRAIT_OPTIONS}}, "required": ["speech", "mood", "portrait"]}}},
         max_output_tokens=500,
     )
     return response.output_text or "{}"
@@ -101,17 +102,32 @@ def _narrowing_reply(result: dict[str, Any], graph: dict[str, Any]) -> str | Non
 def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
     attitude = result.get("attitude") or {}
     status = evidence.get("status")
-    coverage = float(evidence.get("issue_coverage") or 0.0)
-    if status == "unsupported":
-        tone = "annoyed_confident"
+    trace = result.get("attitude_trace") or {}
+    first_confirmed = (
+        status == "new_score"
+        and not int((trace.get("before") or {}).get("pressure", 0))
+        and int(trace.get("new_finding_count") or 0) > 0
+    )
+    if first_confirmed:
+        tone = "embarrassed"
         explain_level = "brief"
-    elif result.get("state") == "mixed_issue":
+    elif status == "mixed_issue" or result.get("state") == "mixed_issue":
         tone = "annoyed_guarded"
         explain_level = "clarification"
+    elif status == "unsupported":
+        tone = "annoyed_confident"
+        explain_level = "brief"
     else:
-        tone = attitude.get("stage", "confident")
+        conversation_state = result.get("conversation_state")
+        previous_tone = getattr(conversation_state, "response_tone", None)
+        tone = (
+            previous_tone
+            if previous_tone and status not in {"new_score", "unsupported"}
+            else attitude.get("stage", "confident")
+        )
         explain_level = "full" if tone in {"nervous", "defeated"} else "brief"
     mood_map = {
+        "embarrassed": ["Embarrassed / Caught"],
         "confident": ["Professional / Controlled"],
         "guarded": ["Guarded / Hesitant"],
         "defensive": ["Defensive / Cornered"],
@@ -120,18 +136,10 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
         "annoyed_confident": ["Annoyed / Dismissive"],
         "annoyed_guarded": ["Annoyed / Dismissive"],
     }
-    contract_count = int(evidence.get("contract_count") or 0)
-    if contract_count == 1:
-        coverage_context = "single_contract"
-    elif coverage >= 0.8:
-        coverage_context = "consistent_in_selected_group"
-    else:
-        coverage_context = "partly_present_in_selected_group"
     return {
         "tone": tone,
         "allowed_moods": mood_map.get(tone, ["Professional / Controlled"]),
         "explain_level": explain_level,
-        "coverage_context": coverage_context,
         "must_not_overclaim": True,
     }
 
@@ -199,29 +207,6 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
             for item in findings
             if item.get("status") in {"new_score", "repeat"} and item.get("contract_id")
         }
-        data["selection_hit_rate"] = (
-            len(confirmed_contracts) / len(contracts)
-            if contracts
-            else 0.0
-        )
-        requested_issues = (result.get("request") or {}).get("requested_concerns", [])
-        issue_key = resolve_issue_key(graph, requested_issues[0]) if requested_issues else None
-        portfolio_matches = {
-            str(contract_id)
-            for contract_id, record in graph.get("contracts", {}).items()
-            if issue_key and bool(record.get("issue_values", {}).get(issue_key, False))
-        }
-        data["issue_coverage"] = (
-            len(confirmed_contracts & portfolio_matches) / len(portfolio_matches)
-            if portfolio_matches
-            else 0.0
-        )
-        all_contract_count = len(graph.get("contracts", {}))
-        data["portfolio_coverage"] = (
-            len(confirmed_contracts) / all_contract_count
-            if all_contract_count
-            else 0.0
-        )
         data["score_result"] = {
             "status": scoring.get("status"),
             "score": scoring.get("score", 0),
@@ -230,9 +215,6 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
             "finding_sample": findings[:3] if action == "explain" or not group_request else [],
             "findings_by_status": finding_groups if action == "explain" or not group_request else None,
             "group_result": "mixed" if mixed_findings else "confirmed" if all_findings_confirmed else "unsupported",
-            "selection_hit_rate": data["selection_hit_rate"],
-            "issue_coverage": data["issue_coverage"],
-            "portfolio_coverage": data["portfolio_coverage"],
         }
     if len(entity_ids) > 100:
         narrative_entities = [
@@ -261,7 +243,10 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
     }
     data["missing"] = result.get("missing", [])
     data["clarification_type"] = result.get("clarification_type")
-    if issues and action == "explain":
+    if issues and (
+        action == "explain"
+        or scoring.get("status") in {"new_score", "repeat", "mixed_issue"}
+    ):
         data["issues"] = [{
             "customer_id": item.get("customer_id"),
             "contract_id": item.get("contract_id"),
@@ -272,6 +257,19 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
             "confirmed": item.get("confirmed"),
             "explanation": item.get("explanation_for_auditor"),
         } for item in issues[:10]]
+    decision = result.get("decision_result") or {}
+    data["evidence_package"] = asdict(EvidencePackage(
+        status=str(data.get("status") or "not_run"),
+        issue=((result.get("request") or {}).get("requested_concerns") or [None])[0],
+        selected_count=len(contracts) + len(customers),
+        confirmed_count=int(decision.get("confirmed_count") or 0),
+        unsupported_count=int(decision.get("unsupported_count") or 0),
+        score_delta=int(decision.get("score_delta") or 0),
+        entity_samples=entity_ids[:10],
+        public_narrative_samples=data.get("narrative_sample", []),
+        secret_narrative_samples=data.get("issues", []),
+        tone=(data.get("response_policy") or {}).get("tone"),
+    ))
     return data
 
 
@@ -337,6 +335,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
     policy = (result.get("evidence") or {}).get("response_policy") or {}
     allowed_moods = policy.get("allowed_moods") or ["Professional / Controlled"]
     result["mood"] = generated.get("mood") if generated.get("mood") in allowed_moods else allowed_moods[0]
+    state.response_tone = str(policy.get("tone") or "confident")
     result["portrait"] = generated.get("portrait") or "looks_good"
     result["visual_extraction_text"] = image_text or ""
     return result

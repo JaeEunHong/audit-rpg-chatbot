@@ -45,12 +45,19 @@ question about Mikael rather than an audit request, set `request` to
 
 The auditor may mention many entities. Detect every distinct policy concern
 claimed in the current turn. If exactly one concern is clearly stated, return
-it in `requested_concerns` and `issue`. If several concerns are explicitly
-stated, return all of them in `requested_concerns` and set `issue` to null.
+it in the schema's `issues` array and `issue`. If several concerns are
+explicitly stated, return all of them in `issues` and set `issue` to null.
 Do not silently choose one from several explicit concerns.
 
 Match the auditor's wording to the supplied concern names and short
-descriptions; do not require the auditor to use an exact issue name. If the
+descriptions semantically; do not require the auditor to use an exact issue
+name or the same vocabulary. Treat concrete paraphrases, thresholds, policy
+comparisons, and colloquial wording as evidence for the matching catalog
+concern. If one catalog concern clearly explains the observation, return that
+concern even when the auditor phrases it as a question or a factual
+observation. A factual statement can itself be the auditor's finding; do not
+require words such as "issue", "problem", or "concern" when the stated fact
+directly matches one catalog concern. If the
 auditor only points out an observation, such as a repeated VIN, do not invent
 or force a concern unless the wording clearly points to one. If no concern
 meaningfully matches, set `issue` to null. Do not decide whether a concern is
@@ -59,8 +66,8 @@ true, who owns it, or whether it should be scored. Do not invent IDs.
 When two or more concerns are plausible, return up to three ranked
 `issue_candidates` with confidence values from 0 to 1 and a short, indirect
 description of what the auditor may have noticed. Do not expose catalog names
-in those descriptions. Set `issue` to null and `requested_concerns` to [] in
-this case. Set `needs_issue_clarification` to true unless the top candidate is
+in those descriptions. Set `issue` to null and `issues` to [] in this case.
+Set `needs_issue_clarification` to true unless the top candidate is
 at least 0.80 confident and the wording clearly identifies that concern.
 
 For a follow-up about the active entities, keep
@@ -93,7 +100,7 @@ Return only this JSON object:
       "selection": {"mode": "one|all|first|last", "type": "string"}
     }
   ],
-  "requested_concerns": ["string"],
+  "issues": ["string"],
   "issue": "string|null",
   "issue_candidates": [
     {"issue": "string", "confidence": 0.0, "description": "string"}

@@ -22,6 +22,7 @@ class ConversationState:
         "last_trigger": None,
         "last_delta": 0,
     })
+    response_tone: str = "confident"
 
     def prompt_context(self) -> dict[str, Any]:
         entity_types = {}
@@ -83,4 +84,5 @@ class ConversationState:
                 "last_trigger": None,
                 "last_delta": 0,
             }),
+            response_tone=str(value.get("response_tone") or "confident"),
         )

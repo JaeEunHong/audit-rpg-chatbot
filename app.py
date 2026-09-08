@@ -204,6 +204,9 @@ MIKAEL_DEFAULT_IMAGE = ASSET_DIR / "looks_good.jpg"
 MIKAEL_AVATAR = str(ASSET_DIR / "mikael_profile.png")
 MIKAEL_INTRO_IMAGE = ASSET_DIR / "mikael_profile_2.png"
 MIKAEL_MOOD_IMAGES = {
+    "Embarrassed / Caught": (
+        ASSET_DIR / "embarrased.png",
+    ),
     "Professional / Controlled": (
         ASSET_DIR / "looks_good.jpg",
         ASSET_DIR / "amused.jpg",
@@ -1671,10 +1674,10 @@ def render_activity(events: list[dict[str, Any]]) -> None:
         return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
     if isinstance(evidence, dict):
-        compact_evidence = dict(evidence)
-        for key in ("entity_ids", "contract_ids_sample", "customer_names"):
+        compact_evidence = dict(evidence.get("evidence_package") or {})
+        for key in ("entity_samples", "public_narrative_samples", "secret_narrative_samples"):
             if isinstance(compact_evidence.get(key), list):
-                compact_evidence[key] = compact_items(compact_evidence[key])
+                compact_evidence[key] = compact_items(compact_evidence[key], 3)
         evidence_label = json.dumps(compact_evidence, ensure_ascii=False, separators=(",", ":"))
     else:
         evidence_label = "none"
@@ -1684,24 +1687,21 @@ def render_activity(events: list[dict[str, Any]]) -> None:
     entities_before = before.get("focus_entities") or []
     entities_after = after.get("focus_entities") or []
     scoring_status = scoring.get("status", "not run")
-    coverage_summary = "n/a"
-    if isinstance(evidence, dict) and isinstance(evidence.get("issue_coverage"), (int, float)):
-        coverage_summary = (
-            f"issue={evidence['issue_coverage'] * 100:.1f}%  "
-            f"portfolio={evidence.get('portfolio_coverage', 0) * 100:.1f}%  "
-            f"selected={evidence.get('selection_hit_rate', 0) * 100:.1f}%"
-        )
+    package = (evidence or {}).get("evidence_package", {}) if isinstance(evidence, dict) else {}
+    issue_label = ", ".join((evidence or {}).get("requested_issue", [])) if isinstance(evidence, dict) else "none"
     lines = [
         "======================================",
         f'USER: "{debug.get("message", "")}"',
         "======================================",
         f"[status]     {debug.get('status', scoring_status)}  state={debug.get('state', (evidence or {}).get('context_routing', {}).get('state', 'n/a') if isinstance(evidence, dict) else 'n/a')}",
         f"[action]     {debug.get('action') or 'not run'}",
+        f"[issue]      {issue_label}",
         f"[topic]      {topic_before}  ->  {topic_after}",
         f"[entities]   {compact_items(entities_before)}  ->  {compact_items(entities_after)}",
+        f"[findings]   confirmed={package.get('confirmed_count', 0)}  unsupported={package.get('unsupported_count', 0)}",
         f"[pending]    {compact_state(before.get('pending_confirmation'))}  ->  {compact_state(after.get('pending_confirmation'))}",
-        f"[attitude]   pressure={(debug.get('attitude') or {}).get('pressure', 'n/a')}  stage={(debug.get('attitude') or {}).get('stage', 'n/a')}  delta={(debug.get('attitude_trace') or {}).get('pressure_delta', 'n/a')}  issue_coverage={((evidence or {}).get('issue_coverage') * 100):.1f}%  portfolio_coverage={((evidence or {}).get('portfolio_coverage') * 100):.1f}%  selection_hit_rate={((evidence or {}).get('selection_hit_rate') * 100):.1f}%" if isinstance(evidence, dict) and isinstance(evidence.get('issue_coverage'), (int, float)) and isinstance(evidence.get('portfolio_coverage'), (int, float)) else f"[attitude]   pressure={(debug.get('attitude') or {}).get('pressure', 'n/a')}  stage={(debug.get('attitude') or {}).get('stage', 'n/a')}  delta={(debug.get('attitude_trace') or {}).get('pressure_delta', 'n/a')}",
-        f"[coverage]   {coverage_summary}",
+        f"[attitude]   pressure={(debug.get('attitude') or {}).get('pressure', 'n/a')}  stage={(debug.get('attitude') or {}).get('stage', 'n/a')}  delta={(debug.get('attitude_trace') or {}).get('pressure_delta', 'n/a')}",
+        f"[tone]       {before.get('response_tone', 'confident')}  ->  {after.get('response_tone', package.get('tone', 'n/a'))}",
         f"[score]      {scoring_status}  score={scoring.get('score', 0)}  delta={scoring.get('score_delta', 0)}",
         f"[response]   {debug.get('reply', '')}",
         f"[details]    {evidence_label}",

@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 
 ALLOWED_MOODS = {
+    "Embarrassed / Caught",
     "Professional / Controlled",
     "Guarded / Hesitant",
     "Defensive / Cornered",
