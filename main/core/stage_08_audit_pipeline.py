@@ -8,7 +8,7 @@ from stage_03_request_parser import merge_pending_request, parse_conversation_re
 from stage_04_entity_resolution import expand_conversation_references, filter_related_data, resolve_target
 from stage_05_verification import verify_request
 from stage_05_verification import check_filtered_request
-from stage_06_scoring import score_entities
+from stage_06_scoring import resolve_issue_key, score_entities
 from conversation_state import ConversationState
 
 
@@ -27,7 +27,13 @@ def _attitude_stage(pressure: int) -> str:
     return "defeated"
 
 
-def _update_attitude(state: ConversationState, scoring: dict[str, Any] | None) -> dict[str, Any]:
+def _update_attitude(
+    state: ConversationState,
+    scoring: dict[str, Any] | None,
+    *,
+    issue_coverage: float = 0.0,
+    portfolio_coverage: float = 0.0,
+) -> dict[str, Any]:
     before = dict(state.attitude)
     if not scoring:
         return {"before": before, "after": before, "trigger": None, "pressure_delta": 0}
@@ -51,10 +57,10 @@ def _update_attitude(state: ConversationState, scoring: dict[str, Any] | None) -
         for item in new_findings
         if str(item.get("issue_type") or item.get("issue_key") or "").strip()
     }
-    diversity_multiplier = min(3.0, 1.0 + 0.5 * max(0, len(issue_types) - 1))
     if new_count:
         trigger = "new_score"
-        pressure_delta = round(new_count * diversity_multiplier)
+        coverage_multiplier = 1.0 + max(0.0, min(1.0, issue_coverage)) + max(0.0, min(1.0, portfolio_coverage))
+        pressure_delta = round(new_count * coverage_multiplier)
     elif unsupported_count:
         trigger = "unsupported"
         unsupported_issue_types = {
@@ -85,7 +91,8 @@ def _update_attitude(state: ConversationState, scoring: dict[str, Any] | None) -
         "new_finding_count": len(new_findings),
         "new_contract_count": new_count,
         "new_issue_type_count": len(issue_types),
-        "diversity_multiplier": diversity_multiplier if new_count else 1.0,
+        "issue_coverage": issue_coverage,
+        "portfolio_coverage": portfolio_coverage,
     }
 
 
@@ -172,6 +179,12 @@ def run_conversation_turn(
         focus_issue = (state_memory.focus_topic or {}).get("issue")
         if focus_issue:
             pending_issues = [focus_issue]
+    if (
+        pending_issues
+        and not parsed.get("requested_concerns")
+        and parsed.get("requested_action") == "explain"
+    ):
+        parsed["requested_concerns"] = pending_issues
     continuation_text = message.casefold()
     is_issue_continuation = any(
         phrase in continuation_text
@@ -179,14 +192,9 @@ def run_conversation_turn(
     )
     if is_issue_continuation and pending_issues:
         parsed["requested_concerns"] = pending_issues
-    if (
-        pending_issues
-        and parsed.get("mentioned_entities")
-        and parsed.get("requested_action") in {"overview", "lookup", None}
-    ):
-        parsed["requested_concerns"] = pending_issues
-        parsed["requested_action"] = pending.get("requested_action")
     request = merge_pending_request(state_memory.pending_confirmation, parsed)
+    if request.get("requested_concerns") and request.get("requested_action") in {"overview", "lookup"}:
+        request["requested_action"] = "assess"
     request["starting_points"] = list(request.get("starting_points") or [])
     request["starting_points"].extend(
         {"type": item.get("type"), "id": item.get("id")}
@@ -365,13 +373,57 @@ def run_conversation_turn(
             if scoring_ledger is not ledger:
                 ledger.clear()
                 ledger.update(scoring_ledger)
-    attitude_trace = _update_attitude(state_memory, scoring)
+    confirmed_contracts = {
+        str(item.get("contract_id") or item.get("record_id") or "")
+        for item in (scoring or {}).get("findings", [])
+        if item.get("status") in {"new_score", "repeat"}
+        and str(item.get("contract_id") or item.get("record_id") or "")
+    }
+    issue_key = resolve_issue_key(
+        case_data,
+        request.get("requested_concerns", [None])[0],
+    ) if request.get("requested_concerns") else None
+    portfolio_matches = {
+        str(contract_id)
+        for contract_id, record in case_data.get("contracts", {}).items()
+        if issue_key and bool(record.get("issue_values", {}).get(issue_key, False))
+    }
+    issue_coverage = (
+        len(confirmed_contracts & portfolio_matches) / len(portfolio_matches)
+        if portfolio_matches else 0.0
+    )
+    all_contract_count = len(case_data.get("contracts", {}))
+    portfolio_coverage = len(confirmed_contracts) / all_contract_count if all_contract_count else 0.0
+    attitude_trace = _update_attitude(
+        state_memory,
+        scoring,
+        issue_coverage=issue_coverage,
+        portfolio_coverage=portfolio_coverage,
+    )
+    previous_focus_entities = list(state_memory.focus_entities)
     if request.get("starting_points"):
         state_memory.focus_entities = request["starting_points"]
     if request.get("requested_concerns") or request.get("requested_action"):
+        current_issue = (request.get("requested_concerns") or [None])[0]
+        existing_issue = (state_memory.focus_topic or {}).get("issue")
+        same_focus = (
+            not request.get("starting_points")
+            or not previous_focus_entities
+            or any(
+                point in previous_focus_entities
+                for point in request.get("starting_points", [])
+            )
+        )
+        if (
+            current_issue is None
+            and existing_issue
+            and same_focus
+            and request.get("requested_action") in {"explain", "overview", "lookup"}
+        ):
+            current_issue = existing_issue
         state_memory.focus_topic = {
             "action": request.get("requested_action"),
-            "issue": (request.get("requested_concerns") or [None])[0],
+            "issue": current_issue,
         }
     state_memory.pending_confirmation = request if state["status"] == "clarification" else None
     return {

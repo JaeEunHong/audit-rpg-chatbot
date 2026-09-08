@@ -108,6 +108,8 @@ def run_agent_turn(
         "before": state_before,
         "after": state_after,
         "action": result.get("action"),
+        "status": result.get("status"),
+        "state": result.get("state"),
         "evidence": result.get("evidence"),
         "mood": result.get("mood"),
         "attitude": result.get("attitude"),
@@ -561,7 +563,7 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
                     ),
                     tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
                 )
-                .properties(height=360)
+                .properties(height=220)
                 .configure_view(stroke=None)
                 .configure_axis(
                     domainColor="#D9DDE7",
@@ -655,7 +657,7 @@ def render_demo_page(case_data: dict[str, Any]) -> None:
                 ),
                 tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
             )
-            .properties(height=300)
+            .properties(height=220)
             .configure_view(stroke=None)
             .configure_axis(
                 gridColor="#EEF0F5",
@@ -1653,18 +1655,58 @@ def render_activity(events: list[dict[str, Any]]) -> None:
     after = debug.get("after", {})
     scoring = debug.get("scoring") or {}
     evidence = debug.get("evidence")
-    evidence_label = "none" if evidence is None else json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+
+    def compact_items(items: list[Any], limit: int = 5) -> str:
+        visible = items[:limit]
+        suffix = f" +{len(items) - limit} more" if len(items) > limit else ""
+        return f"{visible}{suffix}"
+
+    def compact_state(value: Any) -> str:
+        if not isinstance(value, dict):
+            return str(value)
+        result = dict(value)
+        for key in ("focus_entities", "entity_ids"):
+            if isinstance(result.get(key), list):
+                result[key] = compact_items(result[key])
+        return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+
+    if isinstance(evidence, dict):
+        compact_evidence = dict(evidence)
+        for key in ("entity_ids", "contract_ids_sample", "customer_names"):
+            if isinstance(compact_evidence.get(key), list):
+                compact_evidence[key] = compact_items(compact_evidence[key])
+        evidence_label = json.dumps(compact_evidence, ensure_ascii=False, separators=(",", ":"))
+    else:
+        evidence_label = "none"
+    requested_issue = (evidence or {}).get("requested_issue", []) if isinstance(evidence, dict) else []
+    topic_before = (before.get("focus_topic") or {}).get("issue") or "none"
+    topic_after = (after.get("focus_topic") or {}).get("issue") or requested_issue or "none"
+    entities_before = before.get("focus_entities") or []
+    entities_after = after.get("focus_entities") or []
+    scoring_status = scoring.get("status", "not run")
+    coverage_summary = "n/a"
+    if isinstance(evidence, dict) and isinstance(evidence.get("issue_coverage"), (int, float)):
+        coverage_summary = (
+            f"issue={evidence['issue_coverage'] * 100:.1f}%  "
+            f"portfolio={evidence.get('portfolio_coverage', 0) * 100:.1f}%  "
+            f"selected={evidence.get('selection_hit_rate', 0) * 100:.1f}%"
+        )
     lines = [
         "======================================",
         f'USER: "{debug.get("message", "")}"',
         "======================================",
-        f"[entity]     {before.get('focus_entities')}  ->  {after.get('focus_entities')}",
-        f"[topic]      {before.get('focus_topic')}  ->  {after.get('focus_topic')}",
-        f"[confirm]    {before.get('pending_confirmation')}  ->  {after.get('pending_confirmation')}",
+        f"[status]     {debug.get('status', scoring_status)}  state={debug.get('state', (evidence or {}).get('context_routing', {}).get('state', 'n/a') if isinstance(evidence, dict) else 'n/a')}",
         f"[action]     {debug.get('action') or 'not run'}",
-        f"[evidence]   {evidence_label}",
+        f"[topic]      {topic_before}  ->  {topic_after}",
+        f"[entities]   {compact_items(entities_before)}  ->  {compact_items(entities_after)}",
+        f"[pending]    {compact_state(before.get('pending_confirmation'))}  ->  {compact_state(after.get('pending_confirmation'))}",
+        f"[attitude]   pressure={(debug.get('attitude') or {}).get('pressure', 'n/a')}  stage={(debug.get('attitude') or {}).get('stage', 'n/a')}  delta={(debug.get('attitude_trace') or {}).get('pressure_delta', 'n/a')}  issue_coverage={((evidence or {}).get('issue_coverage') * 100):.1f}%  portfolio_coverage={((evidence or {}).get('portfolio_coverage') * 100):.1f}%  selection_hit_rate={((evidence or {}).get('selection_hit_rate') * 100):.1f}%" if isinstance(evidence, dict) and isinstance(evidence.get('issue_coverage'), (int, float)) and isinstance(evidence.get('portfolio_coverage'), (int, float)) else f"[attitude]   pressure={(debug.get('attitude') or {}).get('pressure', 'n/a')}  stage={(debug.get('attitude') or {}).get('stage', 'n/a')}  delta={(debug.get('attitude_trace') or {}).get('pressure_delta', 'n/a')}",
+        f"[coverage]   {coverage_summary}",
+        f"[score]      {scoring_status}  score={scoring.get('score', 0)}  delta={scoring.get('score_delta', 0)}",
+        f"[response]   {debug.get('reply', '')}",
+        f"[details]    {evidence_label}",
         f"[raw_data]   {'reused' if before.get('last_raw_data') else 'not reused'}",
-        f"[score]      {scoring.get('status', 'not run')}  score={scoring.get('score', 0)}  delta={scoring.get('score_delta', 0)}  ledger_entries={len(st.session_state.score_ledger)}",
+        f"[ledger]     entries={len(st.session_state.score_ledger)}",
         "--------------------------------------",
         f"RESPONSE: {debug.get('reply', '')}",
         "======================================",
