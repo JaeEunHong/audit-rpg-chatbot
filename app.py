@@ -1532,7 +1532,7 @@ def render_chat_thread(messages: list[dict], pending: bool = False, record_work:
                 continue
             st.markdown(row, unsafe_allow_html=True)
             if message.get("role") == "assistant" and message.get("tool_events"):
-                with st.expander("Activity", expanded=st.session_state.show_activity):
+                with st.expander("Activity", expanded=st.session_state.show_activity and st.session_state.app_page == "demo"):
                     render_activity(message["tool_events"])
             previous_role = "user" if message.get("role") == "user" else "assistant"
         if pending:
@@ -2045,7 +2045,7 @@ def render_audit_page() -> None:
                     unsafe_allow_html=True,
                 )
                 if events:
-                    with st.expander("Activity", expanded=st.session_state.show_activity):
+                    with st.expander("Activity", expanded=st.session_state.show_activity and st.session_state.app_page == "demo"):
                         render_activity(events)
             score_events = audit_notes_from_events(events)
             queue_audit_note_toasts(score_events)
@@ -2149,11 +2149,12 @@ with st.sidebar:
     with st.expander("Settings", expanded=False):
         if st.button("Open Facilitator View", key="settings_facilitator_view", type="secondary"):
             select_page("facilitator")
-        st.session_state.show_activity = st.checkbox(
-            "Show activity details",
-            value=st.session_state.show_activity,
-            help="Show the internal parser, graph, scoring, and conversation trace under each Mikael reply.",
-        )
+        if st.session_state.app_page == "demo":
+            st.session_state.show_activity = st.checkbox(
+                "Show activity details",
+                value=st.session_state.show_activity,
+                help="Show the internal parser, graph, scoring, and conversation trace under each Mikael reply.",
+            )
 
 if st.session_state.app_page == "home":
     render_home_page()
