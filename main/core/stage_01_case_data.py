@@ -19,6 +19,10 @@ CUSTOMER_LEVEL_ISSUES = {
     "connected_customer_exposure_hidden_by_separate_customer_ids",
 }
 
+ISSUE_DESCRIPTIONS = {
+    "ASSET FINANCED TWICE": "The same asset or VIN is linked to more than one financing contract.",
+}
+
 
 def normalize_key(value: str) -> str:
     import re
@@ -195,6 +199,7 @@ def load_case_data(data_path: Path, entity_path: Path) -> dict[str, Any]:
         for issue, concern in source["concerns"].items():
             graph["concern_catalog"].setdefault(issue, {
                 "why_it_violates_policy": concern["why_it_violates_policy"],
+                "description": ISSUE_DESCRIPTIONS.get(issue, ""),
                 "level": concern_level(issue),
             })
 
@@ -216,6 +221,7 @@ def load_case_data(data_path: Path, entity_path: Path) -> dict[str, Any]:
         for issue, concern in source["concerns"].items():
             graph["concern_catalog"].setdefault(issue, {
                 "why_it_violates_policy": concern["why_it_violates_policy"],
+                "description": ISSUE_DESCRIPTIONS.get(issue, ""),
                 "level": concern_level(issue),
             })
 
