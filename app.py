@@ -338,11 +338,13 @@ if not GRAPH_PATH.exists():
 
 
 @st.cache_data(show_spinner=False)
-def load_case_graph(path: str) -> dict[str, Any]:
+def load_case_graph(path: str, modified_ns: int) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-st.session_state.graph_data = load_case_graph(str(GRAPH_PATH))
+st.session_state.graph_data = load_case_graph(
+    str(GRAPH_PATH), GRAPH_PATH.stat().st_mtime_ns
+)
 case_data = st.session_state.graph_data
 
 
