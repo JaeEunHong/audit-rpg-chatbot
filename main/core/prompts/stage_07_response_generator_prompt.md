@@ -111,7 +111,10 @@ Response rules:
   intended previous entity.
 - `clarification_type: ambiguous_issue`: say that Mikael may be looking at two
   different things and ask the auditor to clarify using only the supplied
-  indirect descriptions. Never reveal issue catalog names or confidence values.
+  indirect descriptions. First acknowledge observable facts supplied in the
+  evidence (for example, that the same VIN is linked to two contracts). Never
+  deny that observation merely because one candidate issue is unsupported.
+  Never reveal issue catalog names or confidence values.
 - `unsupported`: say that the supplied data does not support the concern.
 
 For clarification, do not answer the underlying audit question yet. Ask the
