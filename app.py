@@ -1,5 +1,6 @@
 ﻿import base64
 import html
+import io
 import importlib
 import json
 import os
@@ -15,12 +16,26 @@ if str(ROOT) not in sys.path:
 CORE_DIR = ROOT / "main" / "core"
 if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
+EXP_DIR = ROOT / "exp"
+if str(EXP_DIR) not in sys.path:
+    sys.path.insert(0, str(EXP_DIR))
+EXP_CORE_DIR = EXP_DIR / "core"
+if str(EXP_CORE_DIR) not in sys.path:
+    sys.path.insert(0, str(EXP_CORE_DIR))
 
 import streamlit as st
+import streamlit.components.v1 as components
+import pandas as pd
+import altair as alt
 
 from app_support import DEFAULT_MODEL, extract_mood, image_to_data_url, interview_state_for_mood, load_env, small_talk_reply
 import chat_runtime
 from conversation_state import ConversationState
+from stage_08_audit_pipeline import _attitude_stage
+from db.team import create_team, list_teams
+from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, seed_default_teams, save_turn_bundle
+from streamlit_related.components.leaderboard import render_leaderboard
+from streamlit_related.components.team_form import render_team_picker
 
 chat_runtime = importlib.reload(chat_runtime)
 run_chat_turn = chat_runtime.run_chat_turn
@@ -37,10 +52,31 @@ def run_agent_turn(
             "message_number": index + 1,
             "role": item.get("role", "user"),
             "content": str(item.get("content") or ""),
-            "image_text": str(item.get("visual_extraction_text") or ""),
+            "image_text": str(item.get("visual_extraction_text") or item.get("spreadsheet_text") or ""),
         }
-        for index, item in enumerate(messages)
+        for index, item in enumerate(item for item in messages if not item.get("idle"))
     ]
+    ledger_sync = {"status": "not_run", "team_id": st.session_state.get("team_id", ""), "loaded_count": 0}
+    if st.session_state.get("team_id"):
+        try:
+            loaded_ledger = load_team_score_ledger(st.session_state.team_id)
+            st.session_state.score_ledger.update(loaded_ledger)
+            loaded_contracts = {
+                str(item.get("contract_id") or item.get("record_id") or "")
+                for item in loaded_ledger.values()
+                if str(item.get("contract_id") or item.get("record_id") or "")
+            }
+            current_pressure = int(st.session_state.conversation_state.attitude.get("pressure", 0))
+            restored_pressure = max(current_pressure, len(loaded_contracts))
+            st.session_state.conversation_state.attitude.update({
+                "pressure": restored_pressure,
+                "stage": _attitude_stage(restored_pressure),
+                "last_trigger": "team_ledger_sync",
+                "last_delta": 0,
+            })
+            ledger_sync.update({"status": "loaded", "loaded_count": len(loaded_ledger)})
+        except Exception as exc:
+            ledger_sync.update({"status": "error", "error": str(exc)})
     result = run_chat_turn(
         str(latest_user.get("content") or ""),
         st.session_state.graph_data,
@@ -49,6 +85,7 @@ def run_agent_turn(
         score_ledger,
         image_data_urls=list(latest_user.get("images") or []),
         status_callback=status_callback,
+        team=st.session_state.get("team_id") or "default",
     )
     st.session_state.conversation_state = result.get("conversation_state", st.session_state.conversation_state)
     visual_text = str(result.get("visual_extraction_text") or "").strip()
@@ -57,6 +94,7 @@ def run_agent_turn(
     events = []
     if visual_text:
         events.append({"tool": "visual_parser", "output": {"markdown_table": visual_text}})
+    events.append({"tool": "team_ledger_sync", "output": ledger_sync})
     if result.get("request"):
         events.append({"tool": "llm1_parser", "output": result["request"]})
     events.append({"tool": "python_flow", "output": {"status": result.get("status"), "scoring": result.get("scoring")}})
@@ -71,11 +109,39 @@ def run_agent_turn(
         "after": state_after,
         "action": result.get("action"),
         "evidence": result.get("evidence"),
+        "mood": result.get("mood"),
+        "attitude": result.get("attitude"),
+        "attitude_trace": result.get("attitude_trace"),
         "scoring": score_result,
         "reply": result["reply"],
     }})
     events.append({"tool": "llm2_generator", "output": {"reply": result["reply"]}})
-    return result["reply"], events, {}
+    if st.session_state.get("team_id") and st.session_state.get("session_id"):
+        try:
+            findings = [
+                finding
+                for event in events
+                if event.get("tool") == "update_score"
+                for finding in (event.get("output") or {}).get("findings", [])
+            ]
+            save_turn_bundle(
+                team_id=st.session_state.team_id,
+                session_id=st.session_state.session_id,
+                participant_id=st.session_state.get("participant_id", ""),
+                turn_no=len(messages),
+                user_message=str(latest_user.get("content") or ""),
+                assistant_message=result["reply"],
+                activity={"events": events},
+                state_before=state_before,
+                state_after=st.session_state.conversation_state.to_dict(),
+                findings=findings,
+            )
+        except Exception:
+            pass
+    return result["reply"], events, {
+        "mood": result.get("mood"),
+        "portrait": result.get("portrait"),
+    }
 
 
 def render_activity(events: list[dict[str, Any]]) -> None:
@@ -110,11 +176,12 @@ def require_app_password() -> None:
         return
 
     st.markdown(
-        '<style>.auth-title{font-size:28px;font-weight:600;margin-bottom:18px;text-align:center;}[data-testid="stForm"]{width:100%;max-width:480px;margin:0 auto;box-sizing:border-box;border:1px solid #D9D6CE;border-radius:12px;padding:18px 18px 16px;background:#F7F5F0;}[data-testid="stFormSubmitButton"] button{background:#3F5F6F !important;border-color:#3F5F6F !important;color:#FFFFFF !important;}[data-testid="stFormSubmitButton"] button:hover{background:#304B58 !important;border-color:#304B58 !important;}</style>',
+        '<style>html,body,.stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"],[data-testid="stMainBlockContainer"]{background:#FFFFFF !important;background-color:#FFFFFF !important;color:#20242A !important;}.auth-title{font-size:28px;font-weight:600;margin-bottom:18px;text-align:center;}[data-testid="stForm"]{width:100%;max-width:480px;margin:0 auto;box-sizing:border-box;border:1px solid #E1E4EA;border-radius:12px;padding:18px 18px 16px;background:#FFFFFF;}[data-testid="stForm"] label{color:#344054 !important;}[data-testid="stForm"] input,[data-testid="stTextInput"] input{background:#FFFFFF !important;border-color:#C9CED8 !important;color:#20242A !important;}[data-testid="stForm"] input:focus,[data-testid="stTextInput"] input:focus{border-color:#505AC9 !important;box-shadow:0 0 0 1px #505AC9 !important;}[data-testid="stFormSubmitButton"] button{background:#505AC9 !important;border-color:#505AC9 !important;color:#FFFFFF !important;}[data-testid="stFormSubmitButton"] button:hover{background:#464EB8 !important;border-color:#464EB8 !important;}</style>',
 
         unsafe_allow_html=True,
     )
-    _auth_left, auth_center, _auth_right = st.columns([1, 1, 1])
+    with st.container(width="stretch", horizontal_alignment="center"):
+        auth_center = st.container(width=520)
     with auth_center:
         st.markdown("<div class='auth-title'>Audit interview</div>", unsafe_allow_html=True)
         with st.form("app_password_form"):
@@ -131,16 +198,69 @@ def require_app_password() -> None:
 require_app_password()
 
 ASSET_DIR = ROOT / "assets"
-MIKAEL_DEFAULT_IMAGE = ASSET_DIR / "Confident.png"
-AUDITOR_AVATAR = str(ASSET_DIR / "auditor_profile.png")
+MIKAEL_DEFAULT_IMAGE = ASSET_DIR / "looks_good.jpg"
 MIKAEL_AVATAR = str(ASSET_DIR / "mikael_profile.png")
+MIKAEL_INTRO_IMAGE = ASSET_DIR / "mikael_profile_2.png"
 MIKAEL_MOOD_IMAGES = {
-    "Professional / Controlled": (ASSET_DIR / "Confident.png", "Confident"),
-    "Guarded / Hesitant": (ASSET_DIR / "Concerned.png", "Concerned"),
-    "Defensive / Cornered": (ASSET_DIR / "Defensive.png", "Defensive"),
-    "Reluctant / Defeated": (ASSET_DIR / "Conceding.png", "Conceding"),
-    "Annoyed / Dismissive": (ASSET_DIR / "Arrogant.png", "Arrogant"),
-    "Checking Records": (ASSET_DIR / "Checking_records.png", "Checking records"),
+    "Professional / Controlled": (
+        ASSET_DIR / "looks_good.jpg",
+        ASSET_DIR / "amused.jpg",
+        ASSET_DIR / "determined.jpg",
+    ),
+    "Guarded / Hesitant": (
+        ASSET_DIR / "concerned.jpg",
+        ASSET_DIR / "doubtful.jpg",
+        ASSET_DIR / "skeptical.jpg",
+    ),
+    "Defensive / Cornered": (
+        ASSET_DIR / "defensive.jpg",
+        ASSET_DIR / "frustrated.jpg",
+        ASSET_DIR / "what_is_this.jpg",
+    ),
+    "Reluctant / Defeated": (
+        ASSET_DIR / "tired.jpg",
+        ASSET_DIR / "thinking.jpg",
+    ),
+    "Annoyed / Dismissive": (
+        ASSET_DIR / "frustrated.jpg",
+        ASSET_DIR / "what_is_this.jpg",
+    ),
+    "Checking Records": (
+        ASSET_DIR / "checking_details.jpg",
+        ASSET_DIR / "examining_data.jpg",
+        ASSET_DIR / "analysing.jpg",
+    ),
+}
+IDLE_PORTRAITS = (
+    ASSET_DIR / "Bored.png",
+    ASSET_DIR / "coffee_break.jpg",
+    ASSET_DIR / "playing_with_model.jpg",
+    ASSET_DIR / "Nothing is happening.png",
+)
+PORTRAIT_IMAGES = {
+    path.stem.lower(): path
+    for path in ASSET_DIR.iterdir()
+    if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+}
+PORTRAIT_LABELS = {
+    "looks_good": "Looks good",
+    "amused": "Amused",
+    "determined": "Determined",
+    "concerned": "Concerned",
+    "doubtful": "Doubtful",
+    "skeptical": "Skeptical",
+    "defensive": "Defensive",
+    "frustrated": "Frustrated",
+    "what_is_this": "What is this?",
+    "tired": "Tired",
+    "thinking": "Thinking",
+    "checking_details": "Checking details",
+    "examining_data": "Examining data",
+    "analysing": "Analysing",
+}
+SPECIAL_CONTRACT_PORTRAITS = {
+    "SE100459": ASSET_DIR / "SE110459.png",
+    "SE110459": ASSET_DIR / "SE110459.png",
 }
 STATUS_MESSAGES = [
     (0.0, "Mikael is checking something."),
@@ -156,9 +276,24 @@ st.session_state.setdefault("pending_agent_turn", False)
 st.session_state.setdefault("pending_record_work", False)
 st.session_state.setdefault("pending_audit_toasts", [])
 st.session_state.setdefault("show_deck_placeholder", False)
-st.session_state.setdefault("app_page", "chat")
+st.session_state.setdefault("app_page", "home")
+st.session_state.setdefault("facilitator_ended", False)
+st.session_state.setdefault("demo_mode", False)
 st.session_state.setdefault("team_id", "")
 st.session_state.setdefault("team_name", "")
+st.session_state.setdefault("participant_id", "")
+st.session_state.setdefault("session_id", "")
+st.session_state.setdefault("intro_page", 0)
+st.session_state.setdefault("intro_complete", False)
+st.session_state.setdefault("show_activity", False)
+st.session_state.setdefault("last_activity_at", time.time())
+st.session_state.setdefault("idle_message_added", False)
+st.session_state.setdefault("portrait_override", None)
+st.session_state.setdefault("portrait_key", None)
+st.session_state.setdefault("idle_mood_label", None)
+st.session_state.setdefault("last_idle_message_at", 0.0)
+st.session_state.setdefault("special_mood_label", None)
+st.session_state.setdefault("pending_upload_review", False)
 
 def restore_score_ledger_from_messages() -> None:
     """Recover verified findings if Streamlit retained chat but lost the ledger."""
@@ -200,7 +335,14 @@ def image_data_url(path_text: str, image_mtime: float) -> str:
 GRAPH_PATH = ROOT / "main" / "output" / "case_graph.json"
 if not GRAPH_PATH.exists():
     raise FileNotFoundError("refactoring/output/case_graph.json is missing")
-st.session_state.graph_data = json.loads(GRAPH_PATH.read_text(encoding="utf-8"))
+
+
+@st.cache_data(show_spinner=False)
+def load_case_graph(path: str) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+st.session_state.graph_data = load_case_graph(str(GRAPH_PATH))
 case_data = st.session_state.graph_data
 
 
@@ -217,46 +359,315 @@ def select_page(page: str) -> None:
     st.rerun()
 
 
-def render_home_page() -> None:
-    st.markdown("## Nordovia Audit")
-    st.caption("Team audit workspace")
-    st.markdown("### Who is Mikael?")
-    st.write("Mikael von Geld is the senior credit manager answering for the portfolio.")
-    st.markdown("### How to play")
-    st.write("Choose a team, then raise a concrete concern about a contract or customer. Verified findings count for your team.")
+DEFAULT_TEAMS = [
+    ("TEAM_AI", "Team 1"),
+    ("DATA_1", "Team 2"),
+    ("DATA_2", "Team 3"),
+    ("DATA_3", "Team 4"),
+    ("DATA_4", "Team 5"),
+    ("DATA_5", "Team 6"),
+    ("PAPER_1", "Team 7"),
+    ("PAPER_2", "Team 8"),
+    ("DEMO_X", "Data X"),
+    ("DEMO_Y", "Paper X"),
+    ("DEMO_Z", "AI X"),
+]
+
+
+@st.cache_resource(show_spinner=False)
+def initialize_audit_storage(cache_version: str = "teams-v3") -> bool:
     try:
+        ensure_audit_tables()
+        seed_default_teams()
+        return True
+    except Exception:
+        return False
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def available_teams() -> list[dict[str, str]]:
+    try:
+        # Bump this version when the seeded team registry changes. The short
+        # TTL also lets facilitator/demo views pick up Snowflake changes quickly.
+        initialize_audit_storage("teams-v4")
         teams = list_teams()
-    except Exception as exc:
-        st.error(str(exc))
-        return
-    selected = render_team_picker(teams, create_team)
-    if selected:
-        st.session_state.team_id = selected["team_id"]
-        st.session_state.team_name = selected["team_name"]
-        st.session_state.app_page = "chat"
-        st.rerun()
-    if st.session_state.get("team_id"):
-        st.info(f"Current team: {st.session_state.team_name}")
-        home_chat, home_facilitator = st.columns(2)
-        with home_chat:
-            if st.button("Open chat", use_container_width=True):
-                select_page("chat")
-        with home_facilitator:
-            if st.button("Facilitator view", use_container_width=True):
-                select_page("facilitator")
+        if teams:
+            return [dict(team, group=team.get("group") or TEAM_GROUPS.get(team["team_id"], "DATA")) for team in teams]
+    except Exception:
+        pass
+    return [
+        {"team_id": team_id, "team_name": name, "group": TEAM_GROUPS.get(team_id, "DATA")}
+        for team_id, name in DEFAULT_TEAMS
+    ]
+
+
+@st.dialog("Before you begin")
+def render_intro_wizard() -> None:
+    pages = [
+        ("Who is Mikael?", "You are meeting Mikael von Geld, a senior credit manager with years of experience defending the portfolio and the decisions behind it. He knows the business, the relationships, and exactly how to make an uncomfortable question sound complicated."),
+        ("Build your case", "Find something that looks off.\n\nBring Mikael the contracts or customers behind it, but keep each message focused on one issue. Throw too many unrelated suspicions at him at once, and he’ll only get more confident… and more annoying."),
+        ("File upload tips", "Upload a screenshot, Excel file, or CSV with only the relevant Contract IDs, Customer IDs, Asset IDs, or VINs. Keep groups around 150 records or fewer — if the file is too large, Mikael may ask you to narrow it down."),
+    ]
+    page = st.session_state.intro_page
+    title, body = pages[page]
+    if page == 0 and MIKAEL_INTRO_IMAGE.exists():
+        st.image(str(MIKAEL_INTRO_IMAGE), width=260)
+    st.markdown(f"### {title}")
+    st.write(body)
+    if page == 0:
+        st.info("Character note: confident, experienced, and not especially eager to admit that the process failed.")
+    st.progress((page + 1) / len(pages))
+    left, right = st.columns(2)
+    with left:
+        if page > 0 and st.button("Back", key="intro_back"):
+            st.session_state.intro_page -= 1
+            st.rerun()
+    with right:
+        label = "Start chat" if page == len(pages) - 1 else "Next"
+        if st.button(label, key="intro_next", type="primary"):
+            if page == len(pages) - 1:
+                st.session_state.intro_complete = True
+            else:
+                st.session_state.intro_page += 1
+            st.rerun()
+
+
+def render_home_page() -> None:
+    teams = available_teams()
+    st.markdown(
+        "<div class='home-stage'><div class='home-kicker'>AUDIT ROOM</div>"
+        "<div class='home-title'>Choose your team</div>"
+        "<div class='home-copy'>Work together, find the inconsistencies, and see your team's score move.</div></div>",
+        unsafe_allow_html=True,
+    )
+    with st.container(width="stretch", horizontal_alignment="center"):
+        center = st.container(width=520)
+    with center:
+        demo_version = st.checkbox("Demo version", key="home_demo_version")
+        visible_teams = (
+            [team for team in teams if team["team_id"] in {"DEMO_X", "DEMO_Y", "DEMO_Z"}]
+            if demo_version
+            else [team for team in teams if team["team_id"] not in {"DEMO_X", "DEMO_Y", "DEMO_Z"}]
+        )
+        selected = st.selectbox(
+            "Team",
+            visible_teams,
+            format_func=lambda team: team["team_name"],
+            key="home_team_select",
+            label_visibility="collapsed",
+        )
+        if demo_version:
+            participant_name = "Demo participant"
+        else:
+            participant_name = st.text_input(
+                "Your name",
+                placeholder="Enter your name",
+                key="participant_name_input",
+                label_visibility="collapsed",
+            )
+        if st.button("Enter review room", key="join_team", type="primary", width="stretch"):
+            if not participant_name.strip():
+                st.warning("Enter your name before joining.")
+                st.stop()
+            st.session_state.team_id = selected["team_id"]
+            st.session_state.team_name = selected["team_name"]
+            st.session_state.participant_name = participant_name.strip()
+            st.session_state.participant_id = st.session_state.get("participant_id") or str(__import__("uuid").uuid4())
+            st.session_state.session_id = str(__import__("uuid").uuid4())
+            st.session_state.score_ledger = {}
+            try:
+                create_session(
+                    session_id=st.session_state.session_id,
+                    team_id=st.session_state.team_id,
+                    participant_id=st.session_state.participant_id,
+                    participant_name=st.session_state.participant_name,
+                )
+            except Exception:
+                pass
+            st.session_state.intro_page = 0
+            st.session_state.intro_complete = demo_version
+            select_page("demo" if demo_version else "chat")
 
 
 @st.fragment(run_every=10)
 def render_facilitator_page(case_data: dict[str, Any]) -> None:
     try:
-        teams = list_teams()
+        teams = available_teams()
         rows = leaderboard_rows()
     except Exception as exc:
-        st.error(str(exc))
+        teams = available_teams()
+        rows = []
+        st.caption(f"Snowflake scoreboard unavailable; showing an empty preview. ({exc})")
+    st.markdown("# Facilitator dashboard")
+    if not st.session_state.facilitator_ended:
+        st.caption("Team scores refresh automatically while the session is running.")
+        back_col, home_col = st.columns(2)
+        with back_col:
+            if st.button("Back to chat", key="facilitator_back"):
+                select_page("chat")
+        with home_col:
+            if st.button("Change team", key="facilitator_home"):
+                st.session_state.team_id = ""
+                st.session_state.team_name = ""
+                select_page("home")
+        render_leaderboard(rows, teams, case_data)
+        if st.button("End session", key="facilitator_end_session", type="primary"):
+            st.session_state.facilitator_ended = True
+            st.rerun()
         return
-    st.markdown("## Facilitator")
-    st.caption("Leaderboard refreshes every 10 seconds.")
+
+    st.caption("Final results grouped by the preset DATA, PAPER, and AI team mapping.")
+    try:
+        participant_rows = participant_score_rows()
+    except Exception as exc:
+        participant_rows = []
+        st.warning(f"Final KPI data is unavailable. ({exc})")
+    final_rows = []
+    for row in participant_rows:
+        final_rows.append({
+            "Group": TEAM_GROUPS.get(row["team_id"], "DATA"),
+            "Participant": row["participant_name"],
+            "Total score": row["score"],
+        })
+    if final_rows:
+        final_df = pd.DataFrame(final_rows)
+        final_df = (
+            final_df.groupby(["Group", "Participant"], as_index=False)["Total score"]
+            .sum()
+        )
+        with st.container(border=True):
+            st.dataframe(final_df, hide_index=True, width="stretch")
+            chart_data = (
+                final_df.groupby("Group", as_index=False)["Total score"]
+                .mean()
+                .rename(columns={"Total score": "Average score per person"})
+            )
+            chart = (
+                alt.Chart(chart_data)
+                .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=44)
+                .encode(
+                    x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None),
+                    y=alt.Y("Average score per person:Q", title=None, scale=alt.Scale(zero=True)),
+                    color=alt.Color(
+                        "Group:N",
+                        title="Team group",
+                        scale=alt.Scale(
+                            domain=["DATA", "PAPER", "AI"],
+                            range=["#6F8FA3", "#B28AC2", "#4F46B5"],
+                        ),
+                        legend=alt.Legend(orient="top", title=None),
+                    ),
+                    tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
+                )
+                .properties(height=360)
+                .configure_view(stroke=None)
+                .configure_axis(
+                    domainColor="#D9DDE7",
+                    gridColor="#EEF0F5",
+                    labelColor="#667085",
+                    labelFontSize=14,
+                    title=None,
+                )
+            )
+            st.altair_chart(chart, width="stretch")
+    else:
+        st.info("No scored participant data is available yet.")
+
+
+def render_participant_page() -> None:
+    if not st.session_state.get("team_id"):
+        render_home_page()
+        return
+    if not st.session_state.get("intro_complete"):
+        render_intro_wizard()
+        return
+    render_audit_page()
+
+
+def render_demo_page(case_data: dict[str, Any]) -> None:
+    st.markdown("# Demo workspace")
+    st.caption("Watch the team scoreboard while testing a participant chat in the same workspace.")
+    teams = available_teams()
+    selected_team_id = st.selectbox(
+        "Demo team",
+        [team["team_id"] for team in teams],
+        index=next(
+            (index for index, team in enumerate(teams) if team["team_id"] == st.session_state.get("team_id")),
+            0,
+        ),
+        format_func=lambda team_id: next(team["team_name"] for team in teams if team["team_id"] == team_id),
+        key="demo_team_select",
+    )
+    selected_team = next(team for team in teams if team["team_id"] == selected_team_id)
+    if selected_team_id != st.session_state.get("team_id"):
+        st.session_state.team_id = selected_team_id
+        st.session_state.team_name = selected_team["team_name"]
+        st.session_state.session_id = str(__import__("uuid").uuid4())
+        st.session_state.participant_id = st.session_state.get("participant_id") or str(__import__("uuid").uuid4())
+        st.session_state.participant_name = st.session_state.get("participant_name") or "Demo participant"
+        st.session_state.messages = []
+        st.session_state.score_ledger = {}
+        st.session_state.conversation_state = ConversationState()
+        st.session_state.intro_complete = True
+        try:
+            create_session(
+                session_id=st.session_state.session_id,
+                team_id=st.session_state.team_id,
+                participant_id=st.session_state.participant_id,
+                participant_name=st.session_state.participant_name,
+            )
+        except Exception:
+            pass
+        st.rerun()
+    rows = leaderboard_rows()
     render_leaderboard(rows, teams, case_data)
+    st.markdown("### Average score per person")
+    try:
+        participant_rows = participant_score_rows()
+    except Exception:
+        participant_rows = []
+    if participant_rows:
+        preview_df = pd.DataFrame([
+            {
+                "Group": TEAM_GROUPS.get(row["team_id"], "DATA"),
+                "Participant": row["participant_name"],
+                "Total score": row["score"],
+            }
+            for row in participant_rows
+        ]).groupby(["Group", "Participant"], as_index=False)["Total score"].sum()
+        chart_data = (
+            preview_df.groupby("Group", as_index=False)["Total score"]
+            .mean()
+            .rename(columns={"Total score": "Average score per person"})
+        )
+        chart = (
+            alt.Chart(chart_data)
+            .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=48)
+            .encode(
+                x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None),
+                y=alt.Y("Average score per person:Q", title=None),
+                color=alt.Color(
+                    "Group:N", title=None,
+                    scale=alt.Scale(domain=["DATA", "PAPER", "AI"], range=["#6F8FA3", "#B28AC2", "#4F46B5"]),
+                    legend=None,
+                ),
+                tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
+            )
+            .properties(height=300)
+            .configure_view(stroke=None)
+            .configure_axis(
+                gridColor="#EEF0F5",
+                domainColor="#D9DDE7",
+                labelFontSize=14,
+                title=None,
+            )
+        )
+        with st.container(border=True):
+            st.altair_chart(chart, width="stretch")
+    else:
+        st.info("The KPI chart will appear after the first scored finding.")
+    st.divider()
+    render_audit_page()
 
 
 model_name = os.getenv("AUDIT_GENERATOR_MODEL", DEFAULT_MODEL)
@@ -265,14 +676,14 @@ st.markdown(
     """
     <style>
 :root {
-    --audit-bg: #F7F5F0;
-    --audit-panel: #EFEEE9;
+    --audit-bg: #FFFFFF;
+    --audit-panel: #F5F6FA;
     --audit-text: #20242A;
     --audit-muted: #667085;
-    --audit-line: #DDD8CF;
-    --audit-accent: #3F5F6F;
-    --audit-warm: #B7794A;
-    --audit-input: #F1F4F7;
+    --audit-line: #E1E4EA;
+    --audit-accent: #505AC9;
+    --audit-warm: #505AC9;
+    --audit-input: #EEF0FF;
     --audit-font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .stApp,
@@ -280,8 +691,16 @@ st.markdown(
 [data-testid="stMain"],
 [data-testid="stMain"] > div,
 [data-testid="stHeader"] {
-    background: var(--audit-bg);
+    background: var(--audit-bg) !important;
+    background-color: #FFFFFF !important;
     color: var(--audit-text);
+}
+html,
+body,
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stAppViewContainer"] > .main > div,
+[data-testid="stMainBlockContainer"] {
+    background-color: #FFFFFF !important;
 }
 [data-testid="stHeader"] {
     background: transparent !important;
@@ -350,9 +769,9 @@ body,
 }
 .page-head .app-title {
     display: block;
-    font-family: Constantia, Georgia, "Times New Roman", serif !important;
-    font-size: clamp(32px, 2.25vw, 38px) !important;
-    font-weight: 700;
+    font-family: "Segoe UI", Inter, -apple-system, BlinkMacSystemFont, sans-serif !important;
+    font-size: clamp(30px, 2.15vw, 34px) !important;
+    font-weight: 600;
     letter-spacing: 0;
     line-height: 1.12;
     color: var(--audit-text);
@@ -369,31 +788,72 @@ body,
 }
 .mikael-card {
     width: 100%;
-    max-width: 330px;
+    max-width: 360px;
     aspect-ratio: 16 / 9;
     border-radius: 8px;
     overflow: hidden;
     background: transparent;
     line-height: 0;
-    margin: 0 0 12px;
+    margin: 0 0 12px !important;
+    transform: translateY(-42px);
+}
+.home-stage {
+    max-width: 520px;
+    margin: 96px auto 22px;
+    text-align: center;
+}
+.home-kicker {
+    color: var(--audit-accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    margin-bottom: 12px;
+}
+.home-title {
+    color: var(--audit-text);
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.home-copy {
+    color: var(--audit-muted);
+    font-size: 14px;
+    line-height: 1.5;
+    margin-top: 10px;
 }
 .mikael-portrait {
     display: block !important;
     width: 100% !important;
+    max-width: none !important;
     height: 100% !important;
     object-fit: cover;
     object-position: center center;
+    cursor: zoom-in;
+}
+.mikael-portrait.portrait-enlarged {
+    position: fixed;
+    z-index: 100000;
+    inset: 8vh 10vw;
+    width: 80vw !important;
+    height: 84vh !important;
+    object-fit: contain;
+    background: #FFFFFF;
+    border: 1px solid #E1E4EA;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(16, 24, 40, 0.28);
+    cursor: zoom-out;
 }
 .interview-status {
     display: flex;
     align-items: center;
     width: 100%;
-    max-width: 330px;
+    max-width: 360px;
     margin: 0 0 18px;
     color: var(--audit-muted);
     font-size: 11.5px;
     line-height: 1;
     white-space: nowrap;
+    transform: translateY(-42px);
 }
 .status-item {
     display: inline-flex;
@@ -401,9 +861,9 @@ body,
     height: 24px;
     gap: 5px;
     padding: 0 9px;
-    border: 1px solid rgba(221, 216, 207, 0.95);
+    border: 1px solid rgba(225, 228, 234, 0.95);
     border-radius: 999px;
-    background: rgba(251, 250, 248, 0.66);
+    background: rgba(248, 249, 252, 0.9);
 }
 .status-label {
     color: var(--audit-muted);
@@ -416,7 +876,7 @@ body,
 .briefing-panel {
     width: 100%;
     max-width: 330px;
-    border-top: 1px solid rgba(221, 216, 207, 0.8);
+    border-top: 1px solid rgba(225, 228, 234, 0.8);
     padding: 14px 0 0;
     margin: 0;
     background: transparent;
@@ -439,14 +899,35 @@ body,
     color: var(--audit-muted);
 }
 .play-area-label {
-    max-width: 660px;
-    border-top: 1px solid rgba(221, 216, 207, 0.8);
-    padding-top: 14px;
+    max-width: none;
+    padding-top: 0;
     margin-bottom: 8px;
+}
+.chat-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.connection-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #667085;
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+}
+.connection-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #22A06B;
+    box-shadow: 0 0 0 2px rgba(34, 160, 107, 0.12);
 }
 .clear-chat-control,
 .st-key-clear_chat_control {
-    max-width: 660px;
+    max-width: none;
     margin: -7px 0 2px;
     padding: 0 !important;
     text-align: right;
@@ -476,7 +957,8 @@ body,
     color: rgba(63, 95, 111, 0.82) !important;
 }
 .chat-shell {
-    max-width: 660px;
+    width: 100%;
+    max-width: none;
 }
 .chat-thread {
     height: min(300px, calc(100vh - 500px));
@@ -504,16 +986,24 @@ body,
     padding: 4px 0 8px;
 }
 .chat-row {
-    display: grid;
-    grid-template-columns: 30px minmax(0, 1fr);
+    display: flex;
+    flex-direction: row;
     gap: 8px;
     align-items: start;
-    max-width: 660px;
+    max-width: 92%;
     margin: 0 0 12px;
+}
+.chat-row.user {
+    flex-direction: row-reverse;
+    margin-left: auto;
 }
 .chat-row.grouped {
     margin-top: -2px;
     margin-bottom: 10px;
+}
+.chat-row.user .chat-avatar,
+.chat-row.user .chat-speaker-name {
+    display: none;
 }
 .chat-avatar {
     width: 30px;
@@ -525,17 +1015,23 @@ body,
 .chat-speaker {
     color: rgba(102, 112, 133, 0.95);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
     line-height: 1.2;
     margin: 0 0 3px;
 }
+.chat-time {
+    color: rgba(124, 132, 143, 0.86);
+    font-size: 10.5px;
+    font-weight: 400;
+    margin-left: 5px;
+}
 .chat-row.grouped .chat-speaker {
-    opacity: 0.72;
+    opacity: 1;
 }
 .chat-message-body {
     display: inline-block;
     max-width: 610px;
-    border: 1px solid rgba(221, 216, 207, 0.72);
+    border: 1px solid rgba(225, 228, 234, 0.72);
     border-radius: 8px;
     padding: 7px 10px;
     font-size: 14.5px;
@@ -544,12 +1040,21 @@ body,
     color: var(--audit-text);
 }
 .chat-row.user .chat-message-body {
-    background: rgba(241, 244, 247, 0.92);
-    border-color: rgba(211, 217, 224, 0.88);
+    background: rgba(238, 240, 255, 0.96);
+    border-color: rgba(190, 196, 238, 0.92);
+}
+.chat-row.user .chat-content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+.chat-row.user .chat-speaker {
+    order: 0;
+    text-align: right;
 }
 .chat-row.assistant .chat-message-body {
-    background: rgba(250, 249, 246, 0.78);
-    border-color: rgba(221, 216, 207, 0.68);
+    background: rgba(255, 255, 255, 0.98);
+    border-color: rgba(220, 223, 232, 0.9);
 }
 .chat-shot {
     display: block;
@@ -596,7 +1101,7 @@ body,
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: rgba(183, 121, 74, 0.62);
+    background: rgba(80, 90, 201, 0.62);
     animation: auditPulse 1.2s ease-in-out infinite;
 }
 @keyframes auditPulse {
@@ -604,17 +1109,17 @@ body,
     50% { opacity: 0.95; }
 }
 [data-testid="stChatInput"] {
-    max-width: 660px;
+    max-width: none;
     position: sticky;
     bottom: 0;
     z-index: 4;
-    background: linear-gradient(180deg, rgba(247, 245, 240, 0), var(--audit-bg) 30%);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0), var(--audit-bg) 30%);
     padding-top: 6px;
 }
 [data-testid="stChatInput"] > div {
     min-height: 46px !important;
     border-radius: 10px !important;
-    border: 1px solid rgba(221, 216, 207, 0.86) !important;
+    border: 1px solid rgba(225, 228, 234, 0.86) !important;
     background: rgba(255, 255, 255, 0.92) !important;
     box-shadow: none !important;
 }
@@ -634,7 +1139,7 @@ body,
     height: 30px !important;
     min-width: 30px !important;
     border-radius: 8px !important;
-    background: rgba(239, 238, 233, 0.45) !important;
+    background: rgba(245, 246, 250, 0.9) !important;
     color: rgba(63, 95, 111, 0.62) !important;
     box-shadow: none !important;
 }
@@ -643,7 +1148,7 @@ body,
 }
 [data-testid="stSidebar"] {
     background: var(--audit-panel);
-    border-right: 1px solid rgba(221, 216, 207, 0.95);
+    border-right: 1px solid rgba(225, 228, 234, 0.95);
 }
 [data-testid="stExpander"] pre {
     font-size: 11px !important;
@@ -673,20 +1178,20 @@ body,
     font-size: 13px !important;
     font-weight: 500 !important;
     border-color: rgba(32, 36, 42, 0.14) !important;
-    background: rgba(247, 245, 240, 0.48) !important;
+    background: rgba(245, 246, 250, 0.7) !important;
     color: rgba(32, 36, 42, 0.74) !important;
 }
 [data-testid="stSidebar"] input {
     font-size: 13px !important;
     font-weight: 400 !important;
-    background: rgba(247, 245, 240, 0.55) !important;
+    background: rgba(245, 246, 250, 0.8) !important;
 }
 [data-testid="stSidebar"] [data-testid="stToggle"] label {
     color: rgba(32, 36, 42, 0.62);
 }
 [data-testid="stSidebar"] [data-baseweb="tab-list"] {
     gap: 0.8rem;
-    border-bottom: 1px solid rgba(221, 216, 207, 0.95);
+    border-bottom: 1px solid rgba(225, 228, 234, 0.95);
     margin: 0 0 1.1rem;
 }
 [data-testid="stSidebar"] [data-baseweb="tab"],
@@ -729,7 +1234,7 @@ body,
 }
 .sidebar-rule {
     height: 1px;
-    background: rgba(221, 216, 207, 0.95);
+    background: rgba(225, 228, 234, 0.95);
     margin: 1rem 0 0.8rem;
 }
 .audit-summary-table {
@@ -741,7 +1246,7 @@ body,
 }
 .audit-summary-table th {
     padding: 0.26rem 0.12rem;
-    border-bottom: 1px solid rgba(221, 216, 207, 0.9);
+    border-bottom: 1px solid rgba(225, 228, 234, 0.9);
     color: var(--audit-muted);
     font-size: 9.5px;
     font-weight: 600;
@@ -755,7 +1260,7 @@ body,
 }
 .audit-summary-table td {
     padding: 0.32rem 0.12rem;
-    border-bottom: 1px solid rgba(221, 216, 207, 0.58);
+    border-bottom: 1px solid rgba(225, 228, 234, 0.58);
     line-height: 1.25;
     text-align: right;
     vertical-align: top;
@@ -800,9 +1305,9 @@ body,
 .deck-placeholder {
     margin-top: 0.6rem;
     padding: 0.58rem 0.64rem;
-    border: 1px solid rgba(221, 216, 207, 0.9);
+    border: 1px solid rgba(225, 228, 234, 0.9);
     border-radius: 7px;
-    background: rgba(247, 245, 240, 0.45);
+    background: rgba(245, 246, 250, 0.75);
 }
 .deck-placeholder-title {
     font-size: 12px;
@@ -889,7 +1394,38 @@ body,
 
 
 def chat_avatar(role: str) -> str:
-    return AUDITOR_AVATAR if role == "user" else MIKAEL_AVATAR
+    return MIKAEL_AVATAR
+
+
+ENTITY_COLUMNS = {
+    "customerid": "CustomerID",
+    "customername": "CustomerName",
+    "contractid": "ContractID",
+    "assetid": "AssetID",
+    "vin": "VIN",
+}
+
+
+def spreadsheet_entity_text(file_name: str, content: bytes) -> str:
+    if file_name.lower().endswith(".csv"):
+        frame = pd.read_csv(io.BytesIO(content))
+    else:
+        frame = pd.read_excel(io.BytesIO(content), sheet_name=0)
+    columns = {
+        str(column).strip().lower().replace(" ", ""): column
+        for column in frame.columns
+    }
+    selected = []
+    for normalized, output_name in ENTITY_COLUMNS.items():
+        source = columns.get(normalized)
+        if source is not None:
+            selected.append((source, output_name))
+    if not selected:
+        raise ValueError("The spreadsheet has none of the supported entity columns.")
+    compact = frame[[source for source, _ in selected]].copy()
+    compact.columns = [output_name for _, output_name in selected]
+    compact = compact.fillna("").astype(str)
+    return compact.to_markdown(index=False)
 
 
 def avatar_data_url(role: str) -> str:
@@ -906,19 +1442,29 @@ def display_chat_content(content: str) -> str:
     return text
 
 def render_mikael_panel(mood: str, interview_started: bool) -> None:
-    if interview_started:
-        image_path, _portrait_label = MIKAEL_MOOD_IMAGES.get(mood, MIKAEL_MOOD_IMAGES["Professional / Controlled"])
+    override = st.session_state.get("portrait_override")
+    if override:
+        image_path = Path(override)
+    elif st.session_state.get("portrait_key") in PORTRAIT_IMAGES:
+        image_path = PORTRAIT_IMAGES[st.session_state.portrait_key]
+    elif interview_started:
+        candidates = MIKAEL_MOOD_IMAGES.get(mood, MIKAEL_MOOD_IMAGES["Professional / Controlled"])
+        image_path = candidates[len(st.session_state.messages) % len(candidates)]
     else:
         image_path = MIKAEL_DEFAULT_IMAGE
 
     image_url = html.escape(image_data_url(str(image_path), image_path.stat().st_mtime if image_path.exists() else 0.0), quote=True)
     st.markdown(
-        f'<div class="mikael-card"><img class="mikael-portrait" src="{image_url}" alt="Mikael von Geld portrait"></div>',
+        f'<div class="mikael-card">'
+        f'<img class="mikael-portrait" src="{image_url}" alt="Mikael von Geld portrait" '
+        'onclick="this.classList.toggle(\'portrait-enlarged\')"></div>',
         unsafe_allow_html=True,
     )
 
-def render_interview_status(mood: str, initial: bool = False) -> None:
+def render_interview_status(mood: str, initial: bool = False, display_label: str | None = None) -> None:
     status = {"mood": "Confident"} if initial else interview_state_for_mood(mood)
+    if display_label:
+        status = {"mood": display_label}
     st.markdown(
         (
             "<div class='interview-status'>"
@@ -935,11 +1481,17 @@ def html_chat_text(content: str) -> str:
     return html.escape(text).replace("\n", "<br>")
 
 
+def message_time(message: dict) -> str:
+    return html.escape(str(message.get("timestamp") or time.strftime("%H:%M")))
+
+
 def render_chat_row(message: dict, previous_role: str | None = None) -> str:
     role = "user" if message.get("role") == "user" else "assistant"
-    speaker = "Auditor" if role == "user" else "Mikael"
+    speaker = "Auditor" if role == "user" else "Mikael von Geld"
     grouped = " grouped" if previous_role == role else ""
-    avatar_url = html.escape(avatar_data_url(role), quote=True)
+    avatar_html = "" if role == "user" else (
+        f'<img class="chat-avatar" src="{html.escape(avatar_data_url(role), quote=True)}" alt="{speaker} avatar">'
+    )
     body = html_chat_text(message.get("content", ""))
     images = "".join(
         f'<img class="chat-shot" src="{html.escape(src, quote=True)}" alt="Uploaded screenshot">'
@@ -949,9 +1501,10 @@ def render_chat_row(message: dict, previous_role: str | None = None) -> str:
         return ""
     return (
         f'<div class="chat-row {role}{grouped}">'
-        f'<img class="chat-avatar" src="{avatar_url}" alt="{speaker} avatar">'
-        '<div class="chat-content">'
-        f'<div class="chat-speaker">{speaker}</div>'
+        + avatar_html
+        + '<div class="chat-content">'
+        f'<div class="chat-speaker"><span class="chat-speaker-name">{speaker}</span>'
+        f'<span class="chat-time">{message_time(message)}</span></div>'
         f'<div class="chat-message-body">{body}{images}</div>'
         '</div>'
         '</div>'
@@ -968,19 +1521,90 @@ def render_chat_thread(messages: list[dict], pending: bool = False, record_work:
         return status_slot
 
     previous_role = None
-    with st.container(height=300):
+    with st.container(height=300, key="chat_thread"):
         for message in messages:
             row = render_chat_row(message, previous_role)
             if not row:
                 continue
             st.markdown(row, unsafe_allow_html=True)
             if message.get("role") == "assistant" and message.get("tool_events"):
-                with st.expander("Activity", expanded=False):
+                with st.expander("Activity", expanded=st.session_state.show_activity):
                     render_activity(message["tool_events"])
             previous_role = "user" if message.get("role") == "user" else "assistant"
         if pending:
             status_slot = st.empty()
     return status_slot
+
+
+def render_chat_autoscroll(message_count: int) -> None:
+    # Include the count in the component payload so Streamlit creates a fresh
+    # iframe after each new message instead of reusing an observer that expired.
+    component_html = """
+        <!-- chat message count: __MESSAGE_COUNT__ -->
+        <script>
+        (() => {
+          const messageCount = __MESSAGE_COUNT__;
+          const parent = window.parent.document;
+          const scrollToBottom = () => {
+            const root = parent.querySelector('[class*="st-key-chat_thread"]');
+            if (!root) return false;
+            const nodes = [root, ...root.querySelectorAll('*')];
+            const scrollable = nodes.find((node) =>
+              node.scrollHeight > node.clientHeight &&
+              ['auto', 'scroll'].includes(getComputedStyle(node).overflowY)
+            );
+            if (!scrollable) return false;
+            scrollable.scrollTop = scrollable.scrollHeight;
+            return true;
+          };
+          let attempts = 0;
+          const retry = setInterval(() => {
+            attempts += 1;
+            scrollToBottom();
+            if (attempts >= 20) clearInterval(retry);
+          }, 100);
+          const observer = new MutationObserver(() => scrollToBottom());
+          observer.observe(parent.body, {childList: true, subtree: true});
+          setTimeout(() => observer.disconnect(), 2500);
+        })();
+        </script>
+        """.replace("__MESSAGE_COUNT__", str(message_count))
+    components.html(
+        component_html,
+        height=0,
+        scrolling=False,
+    )
+
+
+@st.fragment(run_every="30s")
+def idle_message_watch() -> None:
+    if not st.session_state.messages or st.session_state.pending_agent_turn:
+        return
+    now = time.time()
+    last_idle_at = float(st.session_state.get("last_idle_message_at", 0.0))
+    if now - max(st.session_state.last_activity_at, last_idle_at) < 300:
+        return
+    idle_turn = sum(1 for item in st.session_state.messages if item.get("idle"))
+    idle_labels = ("Bored", "Coffee break", "Playing with model", "Nothing is happening")
+    comments = [
+        "Hello...? I’m still here, if we’re not done with me yet.",
+        "I took a coffee break. The findings, regrettably, did not.",
+        "I was just testing the model while you were away. Very productive, obviously.",
+        "No rush... I can keep staring at the case file if that helps.",
+    ]
+    st.session_state.portrait_override = str(IDLE_PORTRAITS[idle_turn % len(IDLE_PORTRAITS)])
+    st.session_state.idle_mood_label = idle_labels[idle_turn % len(idle_labels)]
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": comments[len(st.session_state.messages) % len(comments)],
+        "mood": "Annoyed / Dismissive",
+        "idle": True,
+        "score_events": [],
+        "tool_events": [],
+    })
+    st.session_state.idle_message_added = True
+    st.session_state.last_idle_message_at = now
+    st.rerun()
 def render_chat_status(label: str) -> str:
     avatar_url = html.escape(avatar_data_url("assistant"), quote=True)
     safe_label = html.escape(label)
@@ -1295,15 +1919,18 @@ def clear_chat_history_only() -> None:
     st.session_state.pending_record_work = False
     st.session_state.pending_audit_toasts = []
     st.session_state.conversation_state = ConversationState()
+    st.session_state.last_activity_at = time.time()
+    st.session_state.idle_message_added = False
+    st.session_state.idle_mood_label = None
 
 
 def render_audit_page() -> None:
+    idle_message_watch()
     model_name = os.getenv("AUDIT_GENERATOR_MODEL", DEFAULT_MODEL)
     st.markdown(
         """
         <div class='page-head'>
-          <div class='app-title'>Interview: Mikael von Geld</div>
-
+          <div class='app-title'>Meeting with Mikael von Geld</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1314,29 +1941,29 @@ def render_audit_page() -> None:
     record_work = bool(st.session_state.pending_record_work)
     portrait_mood = "Checking Records" if processing_turn and record_work else st.session_state.current_mood
 
-    left_col, chat_col = st.columns([0.30, 0.70], gap="large", vertical_alignment="top")
+    left_col, chat_col = st.columns([0.28, 0.72], gap="large", vertical_alignment="center")
     with left_col:
         render_mikael_panel(portrait_mood, interview_started or processing_turn)
-        render_interview_status(st.session_state.current_mood, initial=not interview_started and not processing_turn)
-        st.markdown(
-            '<div class="screenshot-guidance">'
-            '<strong>Build your case</strong><br>'
-            'Pick one policy concern and gather the contracts or customers that support it. '
-            'If the scope gets too broad, Mikael may ask you to narrow it down.<br><br>'
-            'In each message, state one concern clearly and bring the records behind it. There is no strict limit, '
-            'but around 30 records tends to work best.<br><br>'
-            'Too many unrelated records only slow the review down. For screenshots, include the '
-            'Contract IDs and Customer IDs that matter.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        mood_status_slot = st.empty()
+        if not processing_turn:
+            with mood_status_slot.container():
+                render_interview_status(
+                    st.session_state.current_mood,
+                    initial=not interview_started,
+                    display_label=(st.session_state.idle_mood_label or st.session_state.special_mood_label),
+                )
 
     with chat_col:
-        st.markdown("<div class='play-area-label'>Interview</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='chat-heading'><span class='play-area-label'>Interview</span>"
+            "<span class='connection-badge'><span class='connection-dot'></span>Snowflake connected</span></div>",
+            unsafe_allow_html=True,
+        )
         if not os.getenv("OPENAI_API_KEY"):
             st.warning("OPENAI_API_KEY is missing. Add it to environment or .env before sending a message.")
 
         chat_status_slot = render_chat_thread(st.session_state.messages, pending=processing_turn, record_work=record_work)
+        render_chat_autoscroll(len(st.session_state.messages))
 
         with st.container(key="clear_chat_control"):
             if st.button(
@@ -1367,23 +1994,60 @@ def render_audit_page() -> None:
                 updated_scope = {}
                 status_slot.markdown(render_chat_status("Mikael cannot reach the case file."), unsafe_allow_html=True)
             previous_role = st.session_state.messages[-1].get("role") if st.session_state.messages else None
-            reply_message = {"role": "assistant", "content": reply, "tool_events": events}
+            reply_message = {"role": "assistant", "content": reply, "tool_events": events, "timestamp": time.strftime("%H:%M")}
             with reply_slot.container():
                 st.markdown(
                     f'<div class="chat-shell">{render_chat_row(reply_message, previous_role)}</div>',
                     unsafe_allow_html=True,
                 )
                 if events:
-                    with st.expander("Activity", expanded=False):
+                    with st.expander("Activity", expanded=st.session_state.show_activity):
                         render_activity(events)
             score_events = audit_notes_from_events(events)
             queue_audit_note_toasts(score_events)
 
-            mood = extract_mood(reply)
+            finding_contract_ids = {
+                str(item.get("contract_id") or "").upper()
+                for event in events
+                if event.get("tool") == "update_score"
+                for item in (event.get("output") or {}).get("findings", [])
+            }
+            matching_contract = next(
+                (
+                    contract_id
+                    for contract_id in finding_contract_ids
+                    if contract_id in SPECIAL_CONTRACT_PORTRAITS
+                    and any(
+                        (case_data.get("concern_catalog", {}).get(
+                            str(item.get("issue_type") or ""), {}
+                        ).get("level", "contract") == "contract")
+                        for event in events
+                        if event.get("tool") == "update_score"
+                        for item in (event.get("output") or {}).get("findings", [])
+                        if str(item.get("contract_id") or "").upper() == contract_id
+                        and item.get("status") == "new_score"
+                    )
+                ),
+                None,
+            )
+            st.session_state.portrait_override = (
+                str(SPECIAL_CONTRACT_PORTRAITS[matching_contract])
+                if matching_contract
+                else None
+            )
+            st.session_state.special_mood_label = "Oops..." if matching_contract else None
+
+            mood = updated_scope.get("mood") or extract_mood(reply)
             st.session_state.current_mood = mood
+            st.session_state.portrait_key = (
+                updated_scope.get("portrait")
+                or ("checking_details" if st.session_state.pending_upload_review else None)
+            )
+            st.session_state.pending_upload_review = False
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": reply,
+                "timestamp": time.strftime("%H:%M"),
                 "mood": mood,
                 "score_events": score_events,
                 "tool_events": events,
@@ -1396,33 +2060,40 @@ def render_audit_page() -> None:
             prompt = st.chat_input(
                 "Found something unusual? Point me to the record and tell me what caught your eye.",
                 accept_file=True,
-                file_type=["png", "jpg", "jpeg"],
+                file_type=["png", "jpg", "jpeg", "xlsx", "xls", "csv"],
             )
 
             if prompt:
+                mood_status_slot.empty()
                 text = prompt.text or ""
+                st.session_state.last_activity_at = time.time()
+                st.session_state.idle_message_added = False
+                st.session_state.portrait_override = None
+                st.session_state.idle_mood_label = None
+                st.session_state.special_mood_label = None
+                st.session_state.pending_upload_review = bool(prompt.files)
+                st.session_state.portrait_key = "examining_data" if prompt.files else None
                 image_urls = []
                 display_images = []
+                spreadsheet_text = ""
                 for uploaded in prompt.files or []:
                     content = uploaded.getvalue()
-                    image_urls.append(image_to_data_url(uploaded.name, content))
-                    display_images.append(content)
+                    if Path(uploaded.name).suffix.lower() in {".xlsx", ".xls", ".csv"}:
+                        spreadsheet_text = spreadsheet_entity_text(uploaded.name, content)
+                    else:
+                        image_urls.append(image_to_data_url(uploaded.name, content))
+                        display_images.append(content)
 
                 st.session_state.messages.append(
                     {
                         "role": "user",
                         "content": text,
+                        "timestamp": time.strftime("%H:%M"),
                         "images": image_urls,
                         "display_images": display_images,
+                        "spreadsheet_text": spreadsheet_text,
                     }
                 )
-                quick_reply = small_talk_reply(st.session_state.messages, case_data)
-                if quick_reply:
-                    mood = extract_mood(quick_reply)
-                    st.session_state.current_mood = mood
-                    st.session_state.messages.append({"role": "assistant", "content": quick_reply, "mood": mood, "score_events": []})
-                    st.rerun()
-
                 st.session_state.pending_record_work = True
                 st.session_state.pending_agent_turn = True
                 st.rerun()
@@ -1441,8 +2112,19 @@ with st.sidebar:
         st.caption(f"Score {total_score} · {len(display_notes)} issue type")
         render_audit_summary_table(display_notes)
     with settings_nav:
-        if st.button("Reset interview", key="reset_interview_button", type="secondary", use_container_width=True):
-            reset_interview()
-            st.rerun()
+        if st.button("Open Facilitator View", key="settings_facilitator_view", type="secondary"):
+            select_page("facilitator")
+        st.session_state.show_activity = st.checkbox(
+            "Show activity details",
+            value=st.session_state.show_activity,
+            help="Show the internal parser, graph, scoring, and conversation trace under each Mikael reply.",
+        )
 
-render_audit_page()
+if st.session_state.app_page == "home":
+    render_home_page()
+elif st.session_state.app_page == "facilitator":
+    render_facilitator_page(case_data)
+elif st.session_state.app_page == "demo":
+    render_demo_page(case_data)
+else:
+    render_participant_page()

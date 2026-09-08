@@ -1,0 +1,7 @@
+{
+  "name": "asset_scoring_repeat",
+  "turns": [
+    {"message": "Is the pricing for asset AST510028 inflated?", "expected_mode": "new_score"},
+    {"message": "Why was that allowed?", "expected_mode": "repeat"}
+  ]
+}

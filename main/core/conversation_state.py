@@ -13,6 +13,15 @@ class ConversationState:
     last_raw_data: dict[str, Any] | None = None
     pending_confirmation: dict[str, Any] | None = None
     recent_turns: list[dict[str, str]] = field(default_factory=list)
+    scope_entities: list[dict[str, str]] = field(default_factory=list)
+    scope_start: int = 0
+    scope_end: int = 0
+    attitude: dict[str, Any] = field(default_factory=lambda: {
+        "pressure": 0,
+        "stage": "confident",
+        "last_trigger": None,
+        "last_delta": 0,
+    })
 
     def prompt_context(self) -> dict[str, Any]:
         return {
@@ -20,6 +29,10 @@ class ConversationState:
             "focus_topic": self.focus_topic,
             "last_raw_data": self.last_raw_data,
             "pending_confirmation": self.pending_confirmation,
+            "scope_entities": self.scope_entities,
+            "scope_start": self.scope_start,
+            "scope_end": self.scope_end,
+            "attitude": self.attitude,
         }
 
     def replace_focus(self, entities: list[dict[str, str]], topic: dict[str, Any] | None) -> None:
@@ -42,4 +55,13 @@ class ConversationState:
             last_raw_data=value.get("last_raw_data"),
             pending_confirmation=value.get("pending_confirmation") or value.get("pending_request"),
             recent_turns=list(value.get("recent_turns") or []),
+            scope_entities=list(value.get("scope_entities") or []),
+            scope_start=int(value.get("scope_start") or 0),
+            scope_end=int(value.get("scope_end") or 0),
+            attitude=dict(value.get("attitude") or {
+                "pressure": 0,
+                "stage": "confident",
+                "last_trigger": None,
+                "last_delta": 0,
+            }),
         )

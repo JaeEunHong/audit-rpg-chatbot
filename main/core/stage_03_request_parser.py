@@ -10,7 +10,7 @@ from stage_01_case_data import normalize_compact_id
 
 
 REQUEST_TYPES = {"new", "continue"}
-REQUEST_ACTIONS = {"overview", "lookup", "explain", "assess", "compare"}
+REQUEST_ACTIONS = {"overview", "lookup", "explain", "assess", "compare", "small_talk"}
 
 
 def parse_conversation_request(
@@ -71,7 +71,9 @@ def parse_conversation_request(
     concerns = []
     raw_concerns = value.get("requested_concerns")
     if raw_concerns is None:
-        raw_concerns = [value["issue"]] if value.get("issue") else []
+        raw_concerns = value.get("issues") or ([value["issue"]] if value.get("issue") else [])
+    if value.get("issue") and value["issue"] not in raw_concerns:
+        raw_concerns = [*raw_concerns, value["issue"]]
     for concern in list(raw_concerns or []):
         normalized = str(concern).strip().upper()
         if normalized and normalized not in concerns:
@@ -86,11 +88,13 @@ def parse_conversation_request(
         "request_type": request_type or "new",
         "mentioned_entities": mentioned_entities,
         "references": list(value.get("references") or []),
+        "selection": value.get("selection"),
         "requested_concerns": concerns,
         "requested_details": list(value.get("requested_details") or []),
         "requested_action": action,
         "filled_values": dict(value.get("filled_values") or {}),
         "needs_clarification": bool(value.get("needs_clarification")),
+        "small_talk": value.get("request") == "small_talk",
     }
     if parsed["request_type"] == "continue":
         if concerns:

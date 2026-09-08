@@ -1,0 +1,7 @@
+{
+  "name": "asset_lookup_followup",
+  "turns": [
+    {"message": "Tell me about AST510028.", "expected_mode": "lookup"},
+    {"message": "What VIN is linked to it?", "expected_mode": "lookup"}
+  ]
+}

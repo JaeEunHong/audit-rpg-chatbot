@@ -52,8 +52,11 @@ def image_to_data_url(file_name: str, content: bytes) -> str:
 
 def small_talk_reply(chat_history: list[dict[str, Any]], _case_data: dict[str, Any] | None = None) -> str | None:
     latest = next((str(item.get("content") or "").strip().lower() for item in reversed(chat_history) if item.get("role") == "user"), "")
-    if latest in {"hi", "hello", "hey", "hi there", "good morning", "morning"}:
+    if latest in {"hi", "hello", "hey", "hi there", "good morning", "morning"} or re.fullmatch(
+        r"(?:hi|hello|hey)\s+(?:there|ther|everyone|all)[!?.,]*",
+        latest,
+    ):
         return "[MOOD:Professional / Controlled]\nMorning. We can discuss the book, but start me with a contract or customer."
-    if re.fullmatch(r"how\s+(are|r)\s+(you|u)\??", latest):
+    if re.fullmatch(r"how\s*(are|r)\s*(you|u)\??", latest):
         return "[MOOD:Annoyed / Dismissive]\nBusy, as usual. If we're doing this, start with a contract or customer."
     return None

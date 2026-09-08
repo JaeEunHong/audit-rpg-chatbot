@@ -19,6 +19,11 @@ GENERATOR_PROMPT = ROOT / "prompts" / "stage_07_response_generator_prompt.md"
 PARSER_MODEL = "gpt-4.1"
 GENERATOR_MODEL = "gpt-4.1-mini"
 MAX_GENERATOR_CONTEXT_CHARS = 12000
+PORTRAIT_OPTIONS = [
+    "looks_good", "amused", "determined", "concerned", "doubtful", "skeptical",
+    "defensive", "frustrated", "what_is_this", "tired", "thinking",
+    "checking_details", "examining_data", "analysing",
+]
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -30,10 +35,12 @@ PARSER_SCHEMA = {
         "properties": {
             "entities": {"type": "array", "items": {"type": "object", "additionalProperties": False, "properties": {"type": {"type": "string", "enum": ["customer", "contract", "asset", "vin"]}, "id": {"type": "string"}}, "required": ["type", "id"]}},
             "references": {"type": "array", "items": {"type": "object", "additionalProperties": False, "properties": {"text": {"type": "string"}, "source_message": {"type": "integer"}, "selection": {"type": ["object", "null"], "additionalProperties": False, "properties": {"mode": {"type": "string", "enum": ["one", "all", "first", "last"]}, "type": {"type": "string"}, "count": {"type": ["integer", "null"]}}, "required": ["mode", "type", "count"]}}, "required": ["text", "source_message", "selection"]}},
+            "issues": {"type": "array", "items": {"type": "string"}},
             "issue": {"type": ["string", "null"]},
-            "request": {"type": "string", "enum": ["overview", "lookup", "check", "compare", "explain", "unknown"]},
+            "request": {"type": "string", "enum": ["overview", "lookup", "check", "compare", "explain", "small_talk", "unknown"]},
+            "selection": {"type": ["object", "null"], "additionalProperties": False, "properties": {"mode": {"type": "string", "enum": ["first", "next"]}, "type": {"type": "string", "enum": ["customer", "contract"]}, "count": {"type": "integer"}}, "required": ["mode", "type", "count"]},
         },
-        "required": ["entities", "references", "issue", "request"],
+        "required": ["entities", "references", "issues", "issue", "request", "selection"],
     },
 }
 
@@ -68,17 +75,22 @@ def _generator_call(context: dict[str, Any]) -> str:
         model=os.getenv("AUDIT_GENERATOR_MODEL", GENERATOR_MODEL),
         instructions=GENERATOR_PROMPT.read_text(encoding="utf-8"),
         input=json.dumps(context, ensure_ascii=False),
-        text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}}, "required": ["speech"]}}},
+        text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}, "mood": {"type": "string", "enum": ["Professional / Controlled", "Guarded / Hesitant", "Defensive / Cornered", "Reluctant / Defeated", "Annoyed / Dismissive"]}, "portrait": {"type": "string", "enum": PORTRAIT_OPTIONS}}, "required": ["speech", "mood", "portrait"]}}},
         max_output_tokens=500,
     )
     return response.output_text or "{}"
 
 
 def _narrowing_reply(result: dict[str, Any], graph: dict[str, Any]) -> str | None:
+    # Once scoring has completed, Mikael must answer about that result. Do not
+    # replace a valid scored response with a scope clarification.
+    scoring = result.get("scoring") or {}
+    if scoring.get("status") in {"new_score", "repeat", "unsupported"}:
+        return None
     filtered = result.get("filtered_data", {})
     contracts = list(filtered.get("contracts", []))
     customers = list(filtered.get("customers", []))
-    if len(contracts) <= 50 and (contracts or len(customers) <= 50):
+    if len(contracts) <= 300 and (contracts or len(customers) <= 300):
         return None
     if contracts:
         return f"I have {len(contracts)} contracts in this set. I can check them, but not all at once. Please narrow it to a smaller group of contract IDs."
@@ -93,31 +105,93 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
     contracts = list(filtered.get("contracts", []))
     customers = list(filtered.get("customers", []))
     issues = filtered.get("customer_concerns", []) + filtered.get("contract_concerns", [])
+    action = result.get("action") or result.get("request", {}).get("requested_action")
+    group_request = len(customers) + len(contracts) > 1
+    entity_ids = [
+        {"type": "customer", "id": customer_id}
+        for customer_id in customers
+    ] + [
+        {"type": "contract", "id": contract_id}
+        for contract_id in contracts
+    ]
+    all_findings_confirmed = False
     data: dict[str, Any] = {
         "status": scoring.get("status") or result.get("status"),
-        "action": result.get("action") or result.get("request", {}).get("requested_action"),
+        "action": action,
         "contract_count": len(contracts),
         "customer_count": len(customers),
+        "entity_ids": entity_ids,
+        "entity_count": len(entity_ids),
         "contract_ids_sample": contracts[:5],
         "customer_names": [
             graph.get("customers", {}).get(i, {}).get("customer_name", "")
             for i in customers[:10]
         ],
     }
+    if result.get("attitude"):
+        data["attitude"] = result["attitude"]
+        data["attitude_trace"] = result.get("attitude_trace")
+    selection = (result.get("request") or {}).get("selection")
+    if selection:
+        data["selection"] = selection
     if scoring:
         findings = scoring.get("findings", [])
+        all_findings_confirmed = bool(findings) and all(
+            item.get("status") in {"new_score", "repeat"}
+            for item in findings
+        )
+        finding_groups: dict[str, dict[str, list[str]]] = {}
+        for finding in findings:
+            status = str(finding.get("status") or "unknown")
+            group = finding_groups.setdefault(status, {"customers": [], "contracts": []})
+            customer_id = str(finding.get("customer_id") or "")
+            contract_id = str(finding.get("contract_id") or "")
+            if customer_id and customer_id not in group["customers"]:
+                group["customers"].append(customer_id)
+            if contract_id and contract_id not in group["contracts"]:
+                group["contracts"].append(contract_id)
+        mixed_findings = any(
+            item.get("status") == "unsupported" for item in findings
+        ) and any(
+            item.get("status") in {"new_score", "repeat"} for item in findings
+        )
         data["score_result"] = {
             "status": scoring.get("status"),
             "score": scoring.get("score", 0),
             "score_delta": scoring.get("score_delta", 0),
-            "finding_count": len(findings),
-            "finding_sample": findings[:3],
+            "finding_count": len(findings) if not mixed_findings else None,
+            "finding_sample": findings[:3] if action == "explain" or not group_request else [],
+            "findings_by_status": finding_groups if action == "explain" or not group_request else None,
+            "group_result": "mixed" if mixed_findings else "confirmed" if all_findings_confirmed else "unsupported",
         }
+    if len(entity_ids) > 100:
+        narrative_entities = [
+            ("customer", customer_id, graph.get("customers", {}).get(customer_id, {}))
+            for customer_id in customers
+        ] + [
+            ("contract", contract_id, graph.get("contracts", {}).get(contract_id, {}))
+            for contract_id in contracts
+        ]
+        data["narrative_sample"] = [
+            {
+                "type": entity_type,
+                "id": entity_id,
+                "public_narrative": str(record.get("public_description") or ""),
+            }
+            for entity_type, entity_id, record in narrative_entities[:10]
+            if record.get("public_description")
+        ]
+        data["narrative_sample_is_partial"] = True
     data["requested_issue"] = (result.get("request") or {}).get("requested_concerns", [])
     data["missing"] = result.get("missing", [])
     data["clarification_type"] = result.get("clarification_type")
-    if issues:
+    if issues and action == "explain":
         data["issues"] = [{
+            "customer_id": item.get("customer_id"),
+            "contract_id": item.get("contract_id"),
+            "customer_name": graph.get("customers", {}).get(
+                item.get("customer_id"), {}
+            ).get("customer_name", "") if item.get("customer_id") else "",
             "name": item.get("name"),
             "confirmed": item.get("confirmed"),
             "explanation": item.get("explanation_for_auditor"),
@@ -125,12 +199,14 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
     return data
 
 
-def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState, messages: list[dict[str, Any]], ledger: dict[str, Any], image_data_urls: list[str] | None = None, status_callback: Any = None) -> dict[str, Any]:
+def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState, messages: list[dict[str, Any]], ledger: dict[str, Any], image_data_urls: list[str] | None = None, status_callback: Any = None, team: str = "default") -> dict[str, Any]:
     image_text = None
     if image_data_urls:
         if status_callback:
             status_callback("Mikael is looking at the screenshot.")
         image_text = extract_visible_entities(image_data_urls[0], _vision_call)
+    elif messages:
+        image_text = str(messages[-1].get("image_text") or "").strip() or None
     if status_callback:
         status_callback("Mikael is checking the system.")
     result = run_conversation_turn(
@@ -142,26 +218,37 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         known_concern_names=[{"name": name, **definition} for name, definition in graph.get("concern_catalog", {}).items()],
         image_text=image_text,
         ledger=ledger,
+        team=team,
     )
     result["evidence"] = _evidence(result, graph)
     request = result.get("request") or {}
     result["action"] = result.get("action") or request.get("requested_action")
     if result.get("action") == "small_talk":
-        result["reply"] = "I understand."
-        result["visual_extraction_text"] = image_text or ""
-        return result
+        result["evidence"] = None
     narrowing_reply = _narrowing_reply(result, graph)
     if narrowing_reply:
         result["scoring"] = None
         result["reply"] = narrowing_reply
+        result["mood"] = "Guarded / Hesitant"
         result["visual_extraction_text"] = image_text or ""
         return result
     if status_callback:
         status_callback("Mikael is typing...")
-    reply_context = {"latest_auditor_message": message, "evidence": result["evidence"]}
+    generator_evidence = result["evidence"]
+    if isinstance(generator_evidence, dict):
+        # The activity log keeps the complete evidence. The response model only
+        # needs counts, score status, attitude, and a small narrative sample.
+        generator_evidence = dict(generator_evidence)
+        generator_evidence["entity_ids"] = list(generator_evidence.get("entity_ids", []))[:10]
+        if result.get("status") == "clarification":
+            generator_evidence.pop("narrative_sample", None)
+        else:
+            generator_evidence["narrative_sample"] = list(generator_evidence.get("narrative_sample", []))[:6]
+    reply_context = {"latest_auditor_message": message, "evidence": generator_evidence}
     serialized_context = json.dumps(reply_context, ensure_ascii=False)
     if len(serialized_context) > MAX_GENERATOR_CONTEXT_CHARS:
         result["reply"] = "I have too much detail here to review reliably at once. Could you narrow it down to a smaller group of records?"
+        result["mood"] = "Guarded / Hesitant"
         result["visual_extraction_text"] = image_text or ""
         return result
     try:
@@ -171,5 +258,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         result["visual_extraction_text"] = image_text or ""
         return result
     result["reply"] = str(generated.get("speech") or "").strip()
+    result["mood"] = generated.get("mood") or "Professional / Controlled"
+    result["portrait"] = generated.get("portrait") or "looks_good"
     result["visual_extraction_text"] = image_text or ""
     return result

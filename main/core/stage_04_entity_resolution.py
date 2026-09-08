@@ -46,21 +46,30 @@ def _record_vins(record: dict[str, Any]) -> list[str]:
 
 def resolve_target(case_data: dict[str, Any], kind: str, value: str) -> dict[str, Any]:
     kind = str(kind or "").lower()
-    value = str(value or "").strip().upper()
+    raw_value = str(value or "").strip()
+    value = raw_value.upper()
     if kind == "asset":
         contract_ids = _relationship_index(case_data, "asset_to_contracts").get(value, [])
-        contract_id = contract_ids[0] if contract_ids else case_data.get("asset_to_contract", {}).get(value)
+        fallback = case_data.get("asset_to_contract", {}).get(value)
+        contract_ids = list(dict.fromkeys(contract_ids or ([fallback] if fallback else [])))
+        contract_id = contract_ids[0] if contract_ids else None
         if not contract_id:
             return {"status": "not_found", "input_kind": kind, "input_id": value}
         record = case_data["contracts"].get(contract_id)
-        return _target(case_data, kind, value, contract_id, record)
+        target = _target(case_data, kind, value, contract_id, record)
+        target["contract_ids"] = contract_ids
+        return target
     if kind == "vin":
         contract_ids = _relationship_index(case_data, "vin_to_contracts").get(value, [])
-        contract_id = contract_ids[0] if contract_ids else case_data.get("vin_to_contract", {}).get(value)
+        fallback = case_data.get("vin_to_contract", {}).get(value)
+        contract_ids = list(dict.fromkeys(contract_ids or ([fallback] if fallback else [])))
+        contract_id = contract_ids[0] if contract_ids else None
         if not contract_id:
             return {"status": "not_found", "input_kind": kind, "input_id": value}
         record = case_data["contracts"].get(contract_id)
-        return _target(case_data, kind, value, contract_id, record)
+        target = _target(case_data, kind, value, contract_id, record)
+        target["contract_ids"] = contract_ids
+        return target
     if kind == "contract" and value in case_data.get("contracts", {}):
         return _target(case_data, kind, value, value, case_data["contracts"][value])
     if kind == "customer" and value in case_data.get("customers", {}):
@@ -72,6 +81,15 @@ def resolve_target(case_data: dict[str, Any], kind: str, value: str) -> dict[str
             "vins": _unique(item for r in records for item in _record_vins(r)),
             "record": case_data["customers"][value],
         }
+    if kind == "customer" and raw_value:
+        needle = normalize_key(raw_value)
+        matches = [
+            customer_id
+            for customer_id, record in case_data.get("customers", {}).items()
+            if needle and needle in normalize_key(record.get("customer_name", ""))
+        ]
+        if len(matches) == 1:
+            return resolve_target(case_data, "customer", matches[0])
     return {"status": "not_found", "input_kind": kind, "input_id": value}
 
 
@@ -139,7 +157,9 @@ def filter_related_data(
         if target.get("status") != "resolved":
             continue
         _append(selected["customers"], target.get("customer_id"))
-        _append(selected["contracts"], target.get("contract_id"))
+        contract_ids = target.get("contract_ids") or [target.get("contract_id")]
+        for contract_id in contract_ids:
+            _append(selected["contracts"], contract_id)
         for asset_id in target.get("asset_ids", []):
             _append(selected["assets"], asset_id)
         for vin in target.get("vins", []):
