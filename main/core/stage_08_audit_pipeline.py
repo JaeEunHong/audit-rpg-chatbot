@@ -183,7 +183,7 @@ def run_conversation_turn(
                 "description": "the same vehicle may appear in more than one financing arrangement",
             },
             {
-                "issue": "RECORD RELATIONSHIP REVIEW",
+                "issue": None,
                 "confidence": 0.5,
                 "description": "the vehicle and contract records may be linked unexpectedly",
             },
