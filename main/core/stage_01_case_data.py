@@ -20,8 +20,32 @@ CUSTOMER_LEVEL_ISSUES = {
 }
 
 ISSUE_DESCRIPTIONS = {
-    "ASSET FINANCED TWICE": "The same asset or VIN is linked to more than one financing contract.",
+    "ACTIVE_OVERDUE_AT_APPROVAL": "The contract had active overdue exposure when it was approved.",
+    "APPROVAL BY ROLE THAT DOESN'T EXIST": "The recorded approver role is not a valid role in the approval structure.",
+    "APPROVAL IS ACTUALLY FOR ANOTHER CUSTOMER": "The approval record appears to refer to a different customer.",
+    "CONTRACT APPROVED AFTER START DATE": "The contract was approved after its stated start date.",
+    "DOWN PAYMENT TOO LOW": "The contract has a down payment below the applicable requirement.",
+    "INSUFFICIENT APPROVAL AUTHORITY": "The approval level was not sufficient for the contract exposure.",
+    "MISSING OR WEAK APPROVAL NARRATIVE": "The approval record lacks a clear or adequate rationale.",
     "MV CURVES DO NOT MATCH ASSET": "The asset is assigned an incorrect or unavailable market-value curve.",
+    "NON COMMERCIAL VEHICLE RELATED ASSETS": "The financed asset appears unrelated to a commercial vehicle purpose.",
+    "PORTFOLIO SNAPSHOT DOES NOT RECONCILE TO CONTRACT-LEVEL DATA": "Portfolio totals do not reconcile with the underlying contracts.",
+    "VAGUE HARD COLLATERAL": "The collateral description is too vague to verify the stated security.",
+    "NO APPROVAL RECORDED": "No approval record is available for the contract.",
+    "INTEREST RATE EXTREMELY LOW": "The contract interest rate is unusually low compared with the expected range.",
+    "CONNECTED CUSTOMER EXPOSURE HIDDEN BY SEPARATE CUSTOMER IDS": "Related customer exposure may be split across separate customer records.",
+    "CONTRACT TENOR EXCEEDS MV CURVE HORIZON": "The contract runs beyond the market-value curve horizon.",
+    "CUSTOMER RISK DETERIORATES BUT EXPOSURE KEEPS GROWING": "Customer risk worsens while funded exposure continues to increase.",
+    "ASSET FINANCED TWICE": "The same asset or VIN is linked to more than one financing contract.",
+    "AML RISK": "The customer or transaction shows indicators of elevated money-laundering risk.",
+    "INFLATED PRICING": "The financed price appears inflated relative to the asset or market evidence.",
+    "RECOVERED_OVERDUE_NOT_DISCLOSED": "Previously recovered overdue exposure was not disclosed in the assessment.",
+    "CUSTOMER_IN_DEFAULT_AT_APPROVAL": "The customer was in default when the contract was approved.",
+    "FINANCING ONLY NON TRATON BRANDS": "The financing is limited to brands outside the permitted Traton scope.",
+    "SANCTIONS VIOLATION": "The customer or transaction appears connected to a sanctions concern.",
+    "CUSTOMER IN TAX HAVEN": "The customer is registered or located in a restricted tax-haven jurisdiction.",
+    "AML RISK - CASH PAYMENT": "The transaction shows an elevated money-laundering risk involving cash payment.",
+    "AML RISK - VERY SHORT ACTUAL TENOR": "The actual financing period is unusually short and creates AML concern.",
 }
 
 
