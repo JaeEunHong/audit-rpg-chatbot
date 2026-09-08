@@ -3,3 +3,4 @@ pandas>=3,<4
 openpyxl>=3.1,<4
 openai>=2.44,<3
 snowflake-connector-python>=3.18,<4
+cffi>=2.0.0
