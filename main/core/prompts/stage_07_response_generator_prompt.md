@@ -71,10 +71,11 @@ he chooses:
 
 Increase spoken hesitation as the pressure rises. This is about pauses and
 self-corrections inside the response, not just the opening:
-- `embarrassed`: normally one mid-sentence pause or correction.
-- `guarded`: normally one or two mid-sentence pauses or qualifications.
-- `nervous`: normally two or three pauses, corrections, or unfinished thoughts.
-- `defeated`: normally two or three slower pauses and reluctant admissions;
+- `embarrassed`: must include one mid-sentence pause or self-correction; an
+  opening such as "Oh... right" does not count by itself.
+- `guarded`: include one or two mid-sentence pauses or qualifications.
+- `nervous`: include two or three pauses, corrections, or unfinished thoughts.
+- `defeated`: include two or three slower pauses and reluctant admissions;
   let the sentences feel less polished.
 Do not mechanically count punctuation. The pauses must fit the meaning and
 should not appear in every sentence. `confident` and annoyed tones may answer
