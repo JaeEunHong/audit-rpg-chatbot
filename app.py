@@ -1452,11 +1452,11 @@ def render_mikael_panel(mood: str, interview_started: bool) -> None:
     override = st.session_state.get("portrait_override")
     if override:
         image_path = Path(override)
-    elif st.session_state.get("portrait_key") in PORTRAIT_IMAGES:
-        image_path = PORTRAIT_IMAGES[st.session_state.portrait_key]
     elif interview_started:
         candidates = MIKAEL_MOOD_IMAGES.get(mood, MIKAEL_MOOD_IMAGES["Professional / Controlled"])
         image_path = candidates[len(st.session_state.messages) % len(candidates)]
+    elif st.session_state.get("portrait_key") in PORTRAIT_IMAGES:
+        image_path = PORTRAIT_IMAGES[st.session_state.portrait_key]
     else:
         image_path = MIKAEL_DEFAULT_IMAGE
 
