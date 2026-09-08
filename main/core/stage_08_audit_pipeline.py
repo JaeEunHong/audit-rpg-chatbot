@@ -24,39 +24,6 @@ def _explicit_asset_double_financing(message: str) -> bool:
     )
 
 
-def _ambiguous_same_vin_relationship(message: str) -> bool:
-    text = str(message or "").casefold()
-    return (
-        ("same vin" in text or "same vin number" in text or "identical vin" in text)
-        and "contract" in text
-        and not _explicit_asset_double_financing(text)
-    )
-
-
-def _shared_vin_issue_is_confirmed(
-    case_data: dict[str, Any], parsed: dict[str, Any]
-) -> bool:
-    asset_ids = [
-        item.get("id", "")
-        for item in parsed.get("mentioned_entities", [])
-        if item.get("type") == "asset"
-    ]
-    if len(asset_ids) < 2:
-        return False
-    contracts = []
-    for asset_id in asset_ids:
-        target = resolve_target(case_data, "asset", asset_id)
-        contracts.extend(target.get("contract_ids", []))
-    contracts = list(dict.fromkeys(contracts))
-    if len(contracts) < 2:
-        return False
-    return all(
-        case_data.get("contracts", {}).get(contract_id, {})
-        .get("issue_values", {}).get("asset_financed_twice", False)
-        for contract_id in contracts
-    )
-
-
 def _attitude_stage(pressure: int) -> str:
     if pressure <= 50:
         return "confident"
@@ -193,35 +160,9 @@ def run_conversation_turn(
         parsed["requested_action"] = "assess"
         parsed["needs_issue_clarification"] = False
     elif (
-        not _shared_vin_issue_is_confirmed(case_data, parsed)
-        and (
-        _ambiguous_same_vin_relationship(message)
-        or (
-            ("same vin" in message.casefold() or "same vin number" in message.casefold())
-            and sum(item.get("type") == "asset" for item in parsed.get("mentioned_entities", [])) > 1
-        )
-        )
+        ("same vin" in message.casefold() or "same vin number" in message.casefold())
+        and sum(item.get("type") == "asset" for item in parsed.get("mentioned_entities", [])) > 1
     ):
-        parsed["needs_issue_clarification"] = True
-        parsed["issue_candidates"] = [
-            {
-                "issue": "ASSET FINANCED TWICE",
-                "confidence": 0.5,
-                "description": "the same vehicle may appear in more than one financing arrangement",
-            },
-            {
-                "issue": None,
-                "confidence": 0.5,
-                "description": "the vehicle and contract records may be linked unexpectedly",
-            },
-        ]
-        parsed["requested_concerns"] = []
-        parsed["requested_action"] = "assess"
-        parsed["request_type"] = "new"
-        parsed["starting_points"] = list(parsed.get("mentioned_entities") or [])
-        state_memory.focus_entities = list(parsed.get("mentioned_entities") or [])
-        state_memory.pending_confirmation = parsed
-    elif _shared_vin_issue_is_confirmed(case_data, parsed):
         parsed["requested_concerns"] = ["ASSET FINANCED TWICE"]
         parsed["requested_action"] = "assess"
     candidates = [
