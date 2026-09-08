@@ -183,6 +183,11 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
         ]
         data["narrative_sample_is_partial"] = True
     data["requested_issue"] = (result.get("request") or {}).get("requested_concerns", [])
+    data["issue_candidates"] = result.get("issue_candidates", [])
+    data["context_routing"] = {
+        "state": result.get("state"),
+        "clarification_type": result.get("clarification_type"),
+    }
     data["missing"] = result.get("missing", [])
     data["clarification_type"] = result.get("clarification_type")
     if issues and action == "explain":
