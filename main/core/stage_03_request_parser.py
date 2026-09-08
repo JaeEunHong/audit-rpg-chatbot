@@ -55,7 +55,25 @@ def parse_conversation_request(
     raw_entities = value.get("entities")
     if raw_entities is None:
         raw_entities = value.get("mentioned_entities")
-    for item in list(raw_entities or []):
+    raw_entities = list(raw_entities or [])
+    explicit_patterns = (
+        ("customer", r"\bCUST\s*\d{1,4}\b"),
+        ("contract", r"\bSE\s*\d{6}\b"),
+        ("asset", r"\bAST\s*\d{6}\b"),
+        ("vin", r"\b[A-HJ-NPR-Z0-9]{17}\b"),
+    )
+    existing_ids = {
+        normalize_compact_id(item.get("id") or "")
+        for item in raw_entities
+        if isinstance(item, dict)
+    }
+    for kind, pattern in explicit_patterns:
+        for match in re.finditer(pattern, message, re.IGNORECASE):
+            entity_id = normalize_compact_id(match.group(0))
+            if entity_id not in existing_ids:
+                raw_entities.append({"type": kind, "id": entity_id})
+                existing_ids.add(entity_id)
+    for item in raw_entities:
         kind = str(item.get("type") or "").lower()
         entity_id = normalize_compact_id(item.get("id") or "")
         # ID prefixes are authoritative. This prevents an LLM entity-type
