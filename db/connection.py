@@ -5,7 +5,7 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator
 
-from audit_rpg import load_env
+from app_support import load_env
 
 _connection_state = threading.local()
 
