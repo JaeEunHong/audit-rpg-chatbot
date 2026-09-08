@@ -42,8 +42,10 @@ def decision_result_from_scoring(scoring: dict[str, Any] | None) -> DecisionResu
 
 
 def _attitude_stage(pressure: int) -> str:
-    if pressure <= 50:
+    if pressure <= 0:
         return "confident"
+    if pressure <= 50:
+        return "embarrassed"
     if pressure <= 150:
         return "guarded"
     if pressure <= 400:
