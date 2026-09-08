@@ -22,6 +22,11 @@ def _explicit_asset_double_financing(message: str) -> bool:
         or "double financing" in text
         or "financed more than once" in text
         or ("same vin" in text and "different contract" in text)
+        or (
+            "vin" in text
+            and ("identical" in text or "same" in text)
+            and "different contract" in text
+        )
     )
 
 

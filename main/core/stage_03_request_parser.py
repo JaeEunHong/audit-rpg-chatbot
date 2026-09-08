@@ -58,6 +58,16 @@ def parse_conversation_request(
     for item in list(raw_entities or []):
         kind = str(item.get("type") or "").lower()
         entity_id = normalize_compact_id(item.get("id") or "")
+        # ID prefixes are authoritative. This prevents an LLM entity-type
+        # mistake from sending an asset or VIN through the contract resolver.
+        if entity_id.startswith("CUST"):
+            kind = "customer"
+        elif entity_id.startswith("AST"):
+            kind = "asset"
+        elif entity_id.startswith("SE"):
+            kind = "contract"
+        elif len(entity_id) == 17 and re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", entity_id):
+            kind = "vin"
         if kind == "customer":
             entity_id = "CUST" + entity_id[4:].zfill(4) if entity_id.startswith("CUST") else entity_id
         elif kind == "contract":
