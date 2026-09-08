@@ -146,8 +146,14 @@ def run_conversation_turn(
         }
     candidates = [
         item for item in parsed.get("issue_candidates", [])
-        if isinstance(item, dict) and str(item.get("description") or "").strip()
+        if isinstance(item, dict)
+        and str(item.get("issue") or "").strip()
+        and str(item.get("description") or "").strip()
     ]
+    if len(candidates) == 1:
+        parsed["requested_concerns"] = [str(candidates[0]["issue"]).strip().upper()]
+        parsed["requested_action"] = parsed.get("requested_action") or "assess"
+        parsed["needs_issue_clarification"] = False
     if parsed.get("needs_issue_clarification") and len(candidates) >= 2:
         return {
             "status": "clarification",
