@@ -99,6 +99,18 @@ def _narrowing_reply(result: dict[str, Any], graph: dict[str, Any]) -> str | Non
     return f"I have {len(customers)} customers in this set. I can check them, but not all at once. Please narrow it to a smaller group of customer IDs."
 
 
+def _recent_dialogue_for_generator(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Return a small style-only window for LLM2, never used for decisions."""
+    dialogue: list[dict[str, str]] = []
+    completed = [item for item in messages if item.get("role") in {"user", "assistant"}]
+    for index in range(max(0, len(completed) - 4), len(completed) - 1, 2):
+        auditor = str(completed[index].get("content") or "").strip()
+        mikael = str(completed[index + 1].get("content") or "").strip() if index + 1 < len(completed) else ""
+        if auditor or mikael:
+            dialogue.append({"auditor": auditor[:500], "mikael": mikael[:700]})
+    return dialogue[-2:]
+
+
 def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
     attitude = result.get("attitude") or {}
     status = evidence.get("status")
@@ -318,7 +330,11 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
             generator_evidence.pop("narrative_sample", None)
         else:
             generator_evidence["narrative_sample"] = list(generator_evidence.get("narrative_sample", []))[:6]
-    reply_context = {"latest_auditor_message": message, "evidence": generator_evidence}
+    reply_context = {
+        "latest_auditor_message": message,
+        "evidence": generator_evidence,
+        "recent_dialogue": _recent_dialogue_for_generator(messages),
+    }
     serialized_context = json.dumps(reply_context, ensure_ascii=False)
     if len(serialized_context) > MAX_GENERATOR_CONTEXT_CHARS:
         result["reply"] = "I have too much detail here to review reliably at once. Could you narrow it down to a smaller group of records?"
