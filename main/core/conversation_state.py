@@ -23,6 +23,7 @@ class ConversationState:
         "last_delta": 0,
     })
     response_tone: str = "confident"
+    has_scored_finding: bool = False
 
     def prompt_context(self) -> dict[str, Any]:
         entity_types = {}
@@ -85,4 +86,5 @@ class ConversationState:
                 "last_delta": 0,
             }),
             response_tone=str(value.get("response_tone") or "confident"),
+            has_scored_finding=bool(value.get("has_scored_finding", False)),
         )

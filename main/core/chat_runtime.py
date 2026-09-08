@@ -105,7 +105,7 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
     trace = result.get("attitude_trace") or {}
     first_confirmed = (
         status == "new_score"
-        and not int((trace.get("before") or {}).get("pressure", 0))
+        and not bool(getattr(result.get("conversation_state"), "has_scored_finding", False))
         and int(trace.get("new_finding_count") or 0) > 0
     )
     if first_confirmed:
@@ -336,6 +336,11 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
     allowed_moods = policy.get("allowed_moods") or ["Professional / Controlled"]
     result["mood"] = generated.get("mood") if generated.get("mood") in allowed_moods else allowed_moods[0]
     state.response_tone = str(policy.get("tone") or "confident")
+    if (
+        result.get("status") == "new_score"
+        and int((result.get("decision_result") or {}).get("confirmed_count") or 0) > 0
+    ):
+        state.has_scored_finding = True
     result["portrait"] = generated.get("portrait") or "looks_good"
     result["visual_extraction_text"] = image_text or ""
     return result
