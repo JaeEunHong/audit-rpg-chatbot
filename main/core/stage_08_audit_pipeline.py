@@ -188,6 +188,12 @@ def run_conversation_turn(
                 "description": "the vehicle and contract records may be linked unexpectedly",
             },
         ]
+        parsed["requested_concerns"] = []
+        parsed["requested_action"] = "assess"
+        parsed["request_type"] = "new"
+        parsed["starting_points"] = list(parsed.get("mentioned_entities") or [])
+        state_memory.focus_entities = list(parsed.get("mentioned_entities") or [])
+        state_memory.pending_confirmation = parsed
     candidates = [
         item for item in parsed.get("issue_candidates", [])
         if isinstance(item, dict) and str(item.get("description") or "").strip()

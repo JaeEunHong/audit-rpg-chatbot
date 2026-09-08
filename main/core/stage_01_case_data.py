@@ -21,6 +21,7 @@ CUSTOMER_LEVEL_ISSUES = {
 
 ISSUE_DESCRIPTIONS = {
     "ASSET FINANCED TWICE": "The same asset or VIN is linked to more than one financing contract.",
+    "MV CURVES DO NOT MATCH ASSET": "The asset is assigned an incorrect or unavailable market-value curve.",
 }
 
 
