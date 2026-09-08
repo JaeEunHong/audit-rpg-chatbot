@@ -148,9 +148,23 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
         "annoyed_confident": ["Annoyed / Dismissive"],
         "annoyed_guarded": ["Annoyed / Dismissive"],
     }
+    style_map = {
+        "confident": ("direct and slightly dismissive", 0),
+        "embarrassed": ("caught off guard and awkwardly qualifying the answer", 1),
+        "guarded": ("cautious and unwilling to commit too quickly", 2),
+        "annoyed_confident": ("impatient, clipped, and dismissive", 0),
+        "annoyed_guarded": ("irritated but cautious about the scope", 2),
+        "nervous": ("uncertain, self-correcting, and increasingly uneasy", 3),
+        "defeated": ("tired, reluctant, and no longer trying to defend the decision", 4),
+    }
+    attitude_style, rhythm_level = style_map.get(
+        tone, ("professional and controlled", 0)
+    )
     return {
         "tone": tone,
         "allowed_moods": mood_map.get(tone, ["Professional / Controlled"]),
+        "attitude_style": attitude_style,
+        "rhythm_level": rhythm_level,
         "explain_level": explain_level,
         "must_not_overclaim": True,
     }
