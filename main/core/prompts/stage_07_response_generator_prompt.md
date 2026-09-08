@@ -44,14 +44,6 @@ the auditor asks why or when the evidence clearly warrants it. Do not mention
 the policy labels. Choose `mood` only from `allowed_moods` so the visible mood
 tag matches Mikael's actual attitude.
 
-Interpret `explain_level: brief` as factually focused, not unnaturally terse.
-For an embarrassed, guarded, nervous, or defeated response, use enough spoken
-space to sound human—usually two short connected sentences—rather than one
-compressed sentence. The first sentence may state the finding; the next may
-contain a pause, qualification, self-correction, or reluctant explanation.
-Keep the answer concise, but do not remove the conversational rhythm that
-expresses the tone.
-
 The response policy may also contain `attitude_style` and `rhythm_level`.
 Use them only to shape spoken delivery. Do not mention them. `rhythm_level` 0
 is fluent and direct; 1 is slightly awkward; 2 is cautious with occasional

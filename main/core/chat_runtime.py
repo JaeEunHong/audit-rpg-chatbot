@@ -122,13 +122,10 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
     )
     if first_confirmed:
         tone = "embarrassed"
-        explain_level = "brief"
     elif status == "mixed_issue" or result.get("state") == "mixed_issue":
         tone = "annoyed_guarded"
-        explain_level = "clarification"
     elif status == "unsupported":
         tone = "annoyed_confident"
-        explain_level = "brief"
     else:
         conversation_state = result.get("conversation_state")
         previous_tone = getattr(conversation_state, "response_tone", None)
@@ -137,7 +134,6 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
             if previous_tone and status not in {"new_score", "unsupported"}
             else attitude.get("stage", "confident")
         )
-        explain_level = "full" if tone in {"nervous", "defeated"} else "brief"
     mood_map = {
         "embarrassed": ["Embarrassed / Caught"],
         "confident": ["Professional / Controlled"],
@@ -165,7 +161,6 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
         "allowed_moods": mood_map.get(tone, ["Professional / Controlled"]),
         "attitude_style": attitude_style,
         "rhythm_level": rhythm_level,
-        "explain_level": explain_level,
         "must_not_overclaim": True,
     }
 
