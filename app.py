@@ -2102,16 +2102,7 @@ def render_audit_page() -> None:
 
 
 with st.sidebar:
-    audit_nav, settings_nav = st.tabs(["Audit", "Settings"])
-    with audit_nav:
-        st.markdown("### Audit notes")
-        display_notes = local_scorecard_notes(st.session_state.graph_data, st.session_state.score_ledger)
-        issue_count = len({item.get("issue_type") for item in display_notes if item.get("issue_type")})
-        contract_count = len({finding.get("contract_id") for finding in st.session_state.score_ledger.values() if finding.get("contract_id")})
-        total_score = issue_count * contract_count
-        st.caption(f"Score {total_score} · {len(display_notes)} issue type")
-        render_audit_summary_table(display_notes)
-    with settings_nav:
+    with st.expander("Settings", expanded=False):
         if st.button("Open Facilitator View", key="settings_facilitator_view", type="secondary"):
             select_page("facilitator")
         st.session_state.show_activity = st.checkbox(

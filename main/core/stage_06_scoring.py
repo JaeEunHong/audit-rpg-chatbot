@@ -173,8 +173,13 @@ def score_entities(
 
     new_findings = [item for item in findings if item.get("status") == "new_score"]
     repeat_findings = [item for item in findings if item.get("status") == "repeat"]
+    overall_status = (
+        "new_score" if new_findings
+        else "repeat" if repeat_findings
+        else "unsupported"
+    )
     return {
-        "status": "repeat" if not new_findings and repeat_findings else "new_score",
+        "status": overall_status,
         "score_delta": len(new_findings),
         "score": len(new_findings),
         "score_summary": {
