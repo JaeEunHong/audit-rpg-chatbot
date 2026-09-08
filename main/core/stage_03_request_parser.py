@@ -26,7 +26,7 @@ def parse_conversation_request(
     """Parse an auditor message with bounded conversation context."""
     parser_payload = dict(
         current_message={"speaker": "auditor", "content": message},
-        latest_messages=latest_messages[-10:],
+        latest_messages=latest_messages[-3:],
         active_context=active_context or {},
         pending_request=pending_request or {},
         known_concern_names=known_concern_names or [],
@@ -95,6 +95,8 @@ def parse_conversation_request(
         "filled_values": dict(value.get("filled_values") or {}),
         "needs_clarification": bool(value.get("needs_clarification")),
         "small_talk": value.get("request") == "small_talk",
+        "issue_candidates": list(value.get("issue_candidates") or []),
+        "needs_issue_clarification": bool(value.get("needs_issue_clarification")),
     }
     if parsed["request_type"] == "continue":
         if concerns:

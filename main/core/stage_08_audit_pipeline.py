@@ -113,6 +113,12 @@ def run_conversation_turn(
 ) -> dict[str, Any]:
     """Parse one auditor turn and return filtered data or clarification."""
     state_memory = conversation_state or ConversationState()
+    pending_for_parser = state_memory.pending_confirmation or {}
+    pending_summary = {
+        key: pending_for_parser.get(key)
+        for key in ("request_type", "requested_concerns", "requested_action", "missing", "filled_values")
+        if pending_for_parser.get(key) is not None
+    }
     if False and message.strip().casefold().rstrip(".!?") in ACKNOWLEDGEMENTS:
         return {
             "status": "acknowledged",
@@ -129,7 +135,7 @@ def run_conversation_turn(
         parser_call,
         latest_messages=latest_messages,
         active_context=state_memory.prompt_context(),
-        pending_request=state_memory.pending_confirmation,
+        pending_request=pending_summary,
         known_concern_names=known_concern_names,
         image_text=image_text,
     )
@@ -153,6 +159,23 @@ def run_conversation_turn(
     if _explicit_asset_double_financing(message):
         parsed["requested_concerns"] = ["ASSET FINANCED TWICE"]
         parsed["requested_action"] = "assess"
+        parsed["needs_issue_clarification"] = False
+    candidates = [
+        item for item in parsed.get("issue_candidates", [])
+        if isinstance(item, dict) and str(item.get("description") or "").strip()
+    ]
+    if parsed.get("needs_issue_clarification") and len(candidates) >= 2:
+        return {
+            "status": "clarification",
+            "state": "ambiguous_issue",
+            "missing": ["single_issue"],
+            "clarification_type": "ambiguous_issue",
+            "issue_candidates": candidates[:3],
+            "request": parsed,
+            "scoring": None,
+            "filtered_data": {},
+            "conversation_state": state_memory,
+        }
     pending = state_memory.pending_confirmation or {}
     pending_issues = list(pending.get("requested_concerns") or [])
     if not pending_issues:

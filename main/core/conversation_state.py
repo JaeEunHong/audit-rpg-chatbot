@@ -24,12 +24,31 @@ class ConversationState:
     })
 
     def prompt_context(self) -> dict[str, Any]:
+        entity_types = {}
+        for entity in self.focus_entities:
+            kind = str(entity.get("type") or "unknown")
+            entity_types[kind] = entity_types.get(kind, 0) + 1
+        scope_types = {}
+        for entity in self.scope_entities:
+            kind = str(entity.get("type") or "unknown")
+            scope_types[kind] = scope_types.get(kind, 0) + 1
         return {
-            "focus_entities": self.focus_entities,
-            "focus_topic": self.focus_topic,
-            "last_raw_data": self.last_raw_data,
-            "pending_confirmation": self.pending_confirmation,
-            "scope_entities": self.scope_entities,
+            "focus_summary": {
+                "entity_types": entity_types,
+                "entity_count": len(self.focus_entities),
+                "issue": (self.focus_topic or {}).get("issue"),
+            },
+            "pending_summary": {
+                "issue": (self.pending_confirmation or {}).get("requested_concerns", []),
+                "action": (self.pending_confirmation or {}).get("requested_action"),
+                "missing": (self.pending_confirmation or {}).get("missing", []),
+            },
+            "scope_summary": {
+                "entity_types": scope_types,
+                "entity_count": len(self.scope_entities),
+                "start": self.scope_start,
+                "end": self.scope_end,
+            },
             "scope_start": self.scope_start,
             "scope_end": self.scope_end,
             "attitude": self.attitude,
