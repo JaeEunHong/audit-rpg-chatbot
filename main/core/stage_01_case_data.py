@@ -32,6 +32,8 @@ ISSUE_DESCRIPTIONS = {
     "NON COMMERCIAL VEHICLE RELATED ASSETS": "The financed asset appears unrelated to a commercial vehicle purpose.",
     "PORTFOLIO SNAPSHOT DOES NOT RECONCILE TO CONTRACT-LEVEL DATA": "Portfolio totals do not reconcile with the underlying contracts.",
     "VAGUE HARD COLLATERAL": "The collateral description is too vague to verify the stated security.",
+    "VAGUE OR MISSING HARD COLLATERAL": "The required hard collateral is missing or described too vaguely to verify and enforce.",
+    "MARKET VALUE REPORTING ERROR": "The reported market value does not reconcile with the underlying contract or valuation data.",
     "NO APPROVAL RECORDED": "No approval record is available for the contract.",
     "INTEREST RATE EXTREMELY LOW": "The contract interest rate is unusually low or close to zero compared with the expected range.",
     "CONNECTED CUSTOMER EXPOSURE HIDDEN BY SEPARATE CUSTOMER IDS": "Related customer exposure may be split across separate customer records.",

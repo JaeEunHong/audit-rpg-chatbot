@@ -263,15 +263,15 @@ PORTRAIT_LABELS = {
     "examining_data": "Examining data",
     "analysing": "Analysing",
 }
-SPECIAL_CONTRACT_PORTRAITS = {
-    "SE100459": ASSET_DIR / "SE110459.png",
-    "SE110459": ASSET_DIR / "SE110459.png",
-}
 STATUS_MESSAGES = [
     (0.0, "Mikael is checking something."),
     (3.5, "Mikael is clicking around the system."),
 ]
 RECORD_STATUS_MESSAGES = STATUS_MESSAGES
+MIKAEL_OPENING_MESSAGE = (
+    "I'm fairly confident you won't find much to challenge here. "
+    "There is a policy, people follow it closely, and this is a very tightly run ship. 😎"
+)
 st.session_state.setdefault("messages", [])
 st.session_state.setdefault("score_ledger", {})
 st.session_state.setdefault("conversation_state", ConversationState())
@@ -1522,7 +1522,15 @@ def render_chat_thread(messages: list[dict], pending: bool = False, record_work:
     status_slot = None
     if not messages:
         with st.container(height=300):
-            st.markdown("<div class=chat-shell><div class=chat-thread empty-thread><div class=chat-empty>Start with a contract ID or customer that looks unusual.</div></div></div>", unsafe_allow_html=True)
+            opening = {
+                "role": "assistant",
+                "content": MIKAEL_OPENING_MESSAGE,
+                "timestamp": time.strftime("%H:%M"),
+            }
+            st.markdown(
+                f'<div class="chat-shell">{render_chat_row(opening, None)}</div>',
+                unsafe_allow_html=True,
+            )
             if pending:
                 status_slot = st.empty()
         return status_slot
@@ -1688,6 +1696,7 @@ def render_activity(events: list[dict[str, Any]]) -> None:
     entities_after = after.get("focus_entities") or []
     scoring_status = scoring.get("status", "not run")
     package = (evidence or {}).get("evidence_package", {}) if isinstance(evidence, dict) else {}
+    presentation = (evidence or {}).get("easter_egg_presentation") if isinstance(evidence, dict) else None
     issue_label = ", ".join((evidence or {}).get("requested_issue", [])) if isinstance(evidence, dict) else "none"
     lines = [
         "======================================",
@@ -1699,6 +1708,7 @@ def render_activity(events: list[dict[str, Any]]) -> None:
         f"[topic]      {topic_before}  ->  {topic_after}",
         f"[entities]   {compact_items(entities_before)}  ->  {compact_items(entities_after)}",
         f"[findings]   confirmed={package.get('confirmed_count', 0)}  unsupported={package.get('unsupported_count', 0)}",
+        f"[presentation] {presentation or 'default'}",
         f"[pending]    {compact_state(before.get('pending_confirmation'))}  ->  {compact_state(after.get('pending_confirmation'))}",
         f"[attitude]   pressure={(debug.get('attitude') or {}).get('pressure', 'n/a')}  stage={(debug.get('attitude') or {}).get('stage', 'n/a')}  delta={(debug.get('attitude_trace') or {}).get('pressure_delta', 'n/a')}",
         f"[tone]       {before.get('response_tone', 'confident')}  ->  {after.get('response_tone', package.get('tone', 'n/a'))}",
@@ -2050,36 +2060,11 @@ def render_audit_page() -> None:
             score_events = audit_notes_from_events(events)
             queue_audit_note_toasts(score_events)
 
-            finding_contract_ids = {
-                str(item.get("contract_id") or "").upper()
-                for event in events
-                if event.get("tool") == "update_score"
-                for item in (event.get("output") or {}).get("findings", [])
-            }
-            matching_contract = next(
-                (
-                    contract_id
-                    for contract_id in finding_contract_ids
-                    if contract_id in SPECIAL_CONTRACT_PORTRAITS
-                    and any(
-                        (case_data.get("concern_catalog", {}).get(
-                            str(item.get("issue_type") or ""), {}
-                        ).get("level", "contract") == "contract")
-                        for event in events
-                        if event.get("tool") == "update_score"
-                        for item in (event.get("output") or {}).get("findings", [])
-                        if str(item.get("contract_id") or "").upper() == contract_id
-                        and item.get("status") == "new_score"
-                    )
-                ),
-                None,
-            )
-            st.session_state.portrait_override = (
-                str(SPECIAL_CONTRACT_PORTRAITS[matching_contract])
-                if matching_contract
-                else None
-            )
-            st.session_state.special_mood_label = "Oops..." if matching_contract else None
+            # Portrait selection is decided once by chat_runtime from the
+            # confirmed exact scope. Do not infer special portraits again
+            # from individual score events here.
+            st.session_state.portrait_override = None
+            st.session_state.special_mood_label = None
 
             mood = updated_scope.get("mood") or extract_mood(reply)
             st.session_state.current_mood = mood

@@ -382,7 +382,7 @@ def run_conversation_turn(
             finding.get("status") for finding in tentative_scoring.get("findings", [])
         }
         mixed_group = bool({"new_score", "repeat"} & finding_statuses) and "unsupported" in finding_statuses
-        if mixed_group and len(request.get("starting_points", [])) > 1:
+        if mixed_group:
             findings = tentative_scoring.get("findings", [])
             confirmed_count = sum(
                 item.get("status") in {"new_score", "repeat"}
