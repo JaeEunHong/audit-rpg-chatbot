@@ -136,6 +136,7 @@ CURRENT RESPONSE INSTRUCTIONS (follow these separately from the evidence):
 Use these instructions to shape how Mikael speaks. Do not mention these fields.
 Do not let narrative wording override the current tone. Preserve every fact
 and finding from the evidence, but create fresh spoken dialogue.
+If a portrait override is supplied, return that portrait exactly.
 """
 def _generator_call(context: dict[str, Any], policy: dict[str, Any]) -> str:
     dynamic_instructions = _build_generator_instructions(context, policy)
@@ -235,6 +236,42 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
     }
 
 
+def _easter_egg_presentation(
+    result: dict[str, Any],
+    filtered: dict[str, Any],
+    scoring: dict[str, Any],
+    graph: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return presentation overrides only for an exact confirmed scope."""
+    if scoring.get("status") not in {"new_score", "repeat", "partial_confirmed"}:
+        return None
+    if not any(
+        item.get("status") in {"new_score", "repeat"}
+        for item in scoring.get("findings", [])
+    ):
+        return None
+
+    contracts = list(filtered.get("contracts", []))
+    customers = list(filtered.get("customers", []))
+    if len(contracts) == 1:
+        record = graph.get("contracts", {}).get(contracts[0], {})
+    elif len(customers) == 1 and not contracts:
+        record = graph.get("customers", {}).get(customers[0], {})
+    else:
+        return None
+
+    if not record.get("is_easter_egg"):
+        return None
+    portrait = str(record.get("easter_egg_portrait") or "").strip()
+    if not portrait:
+        return None
+    return {
+        "active": True,
+        "portrait_override": portrait,
+        "target_id": record.get("contract_id") or record.get("customer_id"),
+    }
+
+
 def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] | None:
     if result.get("action") == "small_talk" or result.get("state") == "small_talk":
         return None
@@ -327,6 +364,10 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
         data["narrative_sample_is_partial"] = True
     data["requested_issue"] = (result.get("request") or {}).get("requested_concerns", [])
     data["response_policy"] = _response_policy(result, data)
+    presentation = _easter_egg_presentation(result, filtered, scoring, graph)
+    if presentation:
+        data["easter_egg_presentation"] = presentation
+        data["response_policy"]["portrait_override"] = presentation["portrait_override"]
     data["issue_candidates"] = result.get("issue_candidates", [])
     data["context_routing"] = {
         "state": result.get("state"),
@@ -458,6 +499,10 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         and int((result.get("decision_result") or {}).get("confirmed_count") or 0) > 0
     ):
         state.has_scored_finding = True
-    result["portrait"] = generated.get("portrait") or "looks_good"
+    result["portrait"] = (
+        policy.get("portrait_override")
+        or generated.get("portrait")
+        or "looks_good"
+    )
     result["visual_extraction_text"] = image_text or ""
     return result
