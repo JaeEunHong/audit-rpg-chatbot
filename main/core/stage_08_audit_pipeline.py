@@ -313,22 +313,7 @@ def run_conversation_turn(
             available_concerns.append(name)
     if len(requested_concerns) > 1:
         matching_concerns = [name for name in requested_concerns if name in available_concerns]
-        if len(matching_concerns) == 1:
-            request["requested_concerns"] = matching_concerns
-        else:
-            request["requested_concerns"] = matching_concerns or requested_concerns
-            state_memory.pending_confirmation = request
-            return {
-                "status": "clarification",
-                "state": "multiple_issues",
-                "missing": ["single_issue"],
-                "clarification_type": "multiple_issues",
-                "options": request["requested_concerns"],
-                "request": request,
-                "scoring": None,
-                "filtered_data": filtered,
-                "conversation_state": state_memory,
-            }
+        request["requested_concerns"] = matching_concerns or requested_concerns
     state = check_filtered_request(
         filtered,
         request.get("requested_action"),
@@ -350,13 +335,49 @@ def run_conversation_turn(
     scoring = None
     if ledger is not None and state.get("state") == "ready_for_scoring":
         scoring_ledger = deepcopy(ledger) if len(request.get("starting_points", [])) > 1 else ledger
-        tentative_scoring = score_entities(
-            case_data,
-            scoring_ledger,
-            request.get("starting_points", []),
-            request["requested_concerns"][0],
-            team=team,
+        requested_issues = request["requested_concerns"]
+        single_subject_multi_issue = (
+            len(request.get("starting_points", [])) == 1
+            and len(requested_issues) > 1
         )
+        if single_subject_multi_issue:
+            issue_results = [
+                score_entities(
+                    case_data,
+                    scoring_ledger,
+                    request.get("starting_points", []),
+                    issue,
+                    team=team,
+                )
+                for issue in requested_issues
+            ]
+            findings = [
+                finding
+                for result in issue_results
+                for finding in result.get("findings", [])
+            ]
+            tentative_scoring = {
+                "status": "new_score" if any(
+                    item.get("status") == "new_score" for item in findings
+                ) else "repeat" if any(
+                    item.get("status") == "repeat" for item in findings
+                ) else "unsupported",
+                "score_delta": sum(
+                    int(item.get("score_delta") or (
+                        1 if item.get("status") == "new_score" else 0
+                    ))
+                    for item in findings
+                ),
+                "findings": findings,
+            }
+        else:
+            tentative_scoring = score_entities(
+                case_data,
+                scoring_ledger,
+                request.get("starting_points", []),
+                requested_issues[0],
+                team=team,
+            )
         finding_statuses = {
             finding.get("status") for finding in tentative_scoring.get("findings", [])
         }
