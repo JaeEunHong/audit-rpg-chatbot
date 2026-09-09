@@ -72,10 +72,21 @@ def _vision_call(image: str) -> str:
     return response.output_text or ""
 
 
-def _generator_call(context: dict[str, Any]) -> str:
+def _generator_call(context: dict[str, Any], policy: dict[str, Any]) -> str:
+    policy_instructions = f"""
+CURRENT RESPONSE INSTRUCTIONS (follow these separately from the evidence):
+- tone: {policy.get('tone', 'confident')}
+- attitude: {policy.get('attitude_style', 'professional and controlled')}
+- rhythm: {policy.get('rhythm_level', 0)}
+- allowed moods: {', '.join(policy.get('allowed_moods') or [])}
+
+Use these instructions to shape how Mikael speaks. Do not mention these fields.
+Do not let narrative wording override the current tone. Preserve every fact
+and finding from the evidence, but create fresh spoken dialogue.
+"""
     response = _client().responses.create(
         model=os.getenv("AUDIT_GENERATOR_MODEL", GENERATOR_MODEL),
-        instructions=GENERATOR_PROMPT.read_text(encoding="utf-8"),
+        instructions=GENERATOR_PROMPT.read_text(encoding="utf-8") + policy_instructions,
         input=json.dumps(context, ensure_ascii=False),
         text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}, "mood": {"type": "string", "enum": ["Embarrassed / Caught", "Professional / Controlled", "Guarded / Hesitant", "Defensive / Cornered", "Reluctant / Defeated", "Annoyed / Dismissive"]}, "portrait": {"type": "string", "enum": PORTRAIT_OPTIONS}}, "required": ["speech", "mood", "portrait"]}}},
         max_output_tokens=500,
@@ -330,10 +341,17 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
     if status_callback:
         status_callback("Mikael is typing...")
     generator_evidence = result["evidence"]
+    generator_policy: dict[str, Any] = {}
     if isinstance(generator_evidence, dict):
         # The activity log keeps the complete evidence. The response model only
         # needs counts, score status, attitude, and a small narrative sample.
         generator_evidence = dict(generator_evidence)
+        generator_policy = dict(generator_evidence.pop("response_policy", {}) or {})
+        package = generator_evidence.get("evidence_package")
+        if isinstance(package, dict):
+            package = dict(package)
+            package.pop("tone", None)
+            generator_evidence["evidence_package"] = package
         generator_evidence["entity_ids"] = list(generator_evidence.get("entity_ids", []))[:10]
         if result.get("status") == "clarification":
             generator_evidence.pop("narrative_sample", None)
@@ -351,7 +369,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         result["visual_extraction_text"] = image_text or ""
         return result
     try:
-        generated = json.loads(_generator_call(reply_context))
+        generated = json.loads(_generator_call(reply_context, generator_policy))
     except (json.JSONDecodeError, TypeError):
         result["reply"] = "Sorry, I didn’t catch that. Could you say it again?"
         result["visual_extraction_text"] = image_text or ""
