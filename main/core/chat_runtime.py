@@ -287,7 +287,20 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
             ).get("customer_name", "") if item.get("customer_id") else "",
             "name": item.get("name"),
             "confirmed": item.get("confirmed"),
-            "explanation": item.get("explanation_for_auditor"),
+            "why_it_violates_policy": item.get("why_it_violates_policy"),
+            "explanation": "\n\n".join(
+                part for part in (
+                    (
+                        "Why it violates policy: "
+                        + str(item.get("why_it_violates_policy") or "")
+                    ).strip(),
+                    (
+                        "Explanation given to auditor: "
+                        + str(item.get("explanation_for_auditor") or "")
+                    ).strip(),
+                )
+                if part.split(": ", 1)[-1].strip()
+            ),
         } for item in issues[:10]]
     decision = result.get("decision_result") or {}
     data["evidence_package"] = asdict(EvidencePackage(
