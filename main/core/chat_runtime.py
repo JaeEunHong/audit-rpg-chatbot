@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 from dataclasses import asdict
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
+from PIL import Image, ImageEnhance
 
 from conversation_state import ConversationState
 from audit_types import EvidencePackage
@@ -63,6 +65,7 @@ def _parser_call(**payload: Any) -> str:
 
 
 def _vision_call(image: str) -> str:
+    image = _prepare_visual_image(image)
     response = _client().responses.create(
         model=os.getenv("AUDIT_VISUAL_MODEL", "gpt-5.6"),
         instructions=(ROOT / "prompts" / "stage_02_visual_extraction_prompt.md").read_text(encoding="utf-8"),
@@ -80,21 +83,65 @@ def _vision_call(image: str) -> str:
     return "\n".join(parts)
 
 
-def _generator_call(context: dict[str, Any], policy: dict[str, Any]) -> str:
-    policy_instructions = f"""
+def _prepare_visual_image(image: str) -> str:
+    """Improve only very small uploads before sending them to vision."""
+    if not image.startswith("data:image/") or "," not in image:
+        return image
+    header, encoded = image.split(",", 1)
+    try:
+        source = Image.open(io.BytesIO(base64.b64decode(encoded)))
+    except Exception:
+        return image
+    width, height = source.size
+    if width >= 300 and height >= 18:
+        return image
+    enhanced = source.convert("RGB").resize(
+        (width * 4, height * 4), Image.Resampling.LANCZOS
+    )
+    enhanced = ImageEnhance.Contrast(enhanced).enhance(1.15)
+    enhanced = ImageEnhance.Sharpness(enhanced).enhance(1.4)
+    output = io.BytesIO()
+    enhanced.save(output, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+
+
+def _build_generator_instructions(
+    context: dict[str, Any], policy: dict[str, Any]
+) -> str:
+    evidence = context.get("evidence") or {}
+    issue_contexts = evidence.get("issues") or []
+    explanation_length_instruction = ""
+    if (
+        evidence.get("status") in {"new_score", "partial_confirmed", "repeat"}
+        and issue_contexts
+        and any(
+            item.get("auditor_explanation") or item.get("policy_reason")
+            for item in issue_contexts
+        )
+    ):
+        explanation_length_instruction = (
+            "- This is a scored group with supplied explanation context. "
+            "Write 3-5 complete spoken sentences. Do not stop after one or "
+            "two sentences; connect the finding, the supplied explanation, "
+            "and a reflective qualifier.\n"
+        )
+    return f"""
 CURRENT RESPONSE INSTRUCTIONS (follow these separately from the evidence):
 - tone: {policy.get('tone', 'confident')}
 - attitude: {policy.get('attitude_style', 'professional and controlled')}
 - rhythm: {policy.get('rhythm_level', 0)}
 - allowed moods: {', '.join(policy.get('allowed_moods') or [])}
+{explanation_length_instruction}
 
 Use these instructions to shape how Mikael speaks. Do not mention these fields.
 Do not let narrative wording override the current tone. Preserve every fact
 and finding from the evidence, but create fresh spoken dialogue.
 """
+def _generator_call(context: dict[str, Any], policy: dict[str, Any]) -> str:
+    dynamic_instructions = _build_generator_instructions(context, policy)
     response = _client().responses.create(
         model=os.getenv("AUDIT_GENERATOR_MODEL", GENERATOR_MODEL),
-        instructions=GENERATOR_PROMPT.read_text(encoding="utf-8") + policy_instructions,
+        instructions=GENERATOR_PROMPT.read_text(encoding="utf-8") + dynamic_instructions,
         input=json.dumps(context, ensure_ascii=False),
         text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}, "mood": {"type": "string", "enum": ["Embarrassed / Caught", "Professional / Controlled", "Guarded / Hesitant", "Defensive / Cornered", "Reluctant / Defeated", "Annoyed / Dismissive"]}, "portrait": {"type": "string", "enum": PORTRAIT_OPTIONS}}, "required": ["speech", "mood", "portrait"]}}},
         max_output_tokens=500,
@@ -143,6 +190,10 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
         tone = "embarrassed"
     elif status == "mixed_issue" or result.get("state") == "mixed_issue":
         tone = "annoyed_guarded"
+    elif status == "partial_confirmed":
+        tone = "guarded"
+    elif status in {"repeat", "not_found"}:
+        tone = "annoyed_confident"
     elif status == "unsupported":
         tone = "annoyed_confident"
     else:

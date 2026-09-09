@@ -362,18 +362,36 @@ def run_conversation_turn(
         }
         mixed_group = bool({"new_score", "repeat"} & finding_statuses) and "unsupported" in finding_statuses
         if mixed_group and len(request.get("starting_points", [])) > 1:
-            scoring = {
-                "status": "mixed_issue",
-                "score_delta": 0,
-                "findings": tentative_scoring.get("findings", []),
-            }
-            state = {
-                "status": "clarification",
-                "state": "mixed_issue",
-                "missing": ["specific_entity"],
-                "clarification_type": "mixed_issue",
-                "options": [],
-            }
+            findings = tentative_scoring.get("findings", [])
+            confirmed_count = sum(
+                item.get("status") in {"new_score", "repeat"}
+                for item in findings
+            )
+            unsupported_count = sum(
+                item.get("status") == "unsupported" for item in findings
+            )
+            if confirmed_count >= unsupported_count:
+                scoring = dict(tentative_scoring)
+                scoring["status"] = "partial_confirmed"
+                scoring["score_delta"] = sum(
+                    item.get("status") == "new_score" for item in findings
+                )
+                if scoring_ledger is not ledger:
+                    ledger.clear()
+                    ledger.update(scoring_ledger)
+            else:
+                scoring = {
+                    "status": "mixed_issue",
+                    "score_delta": 0,
+                    "findings": findings,
+                }
+                state = {
+                    "status": "clarification",
+                    "state": "mixed_issue",
+                    "missing": ["specific_entity"],
+                    "clarification_type": "mixed_issue",
+                    "options": [],
+                }
         else:
             scoring = tentative_scoring
             if scoring_ledger is not ledger:
