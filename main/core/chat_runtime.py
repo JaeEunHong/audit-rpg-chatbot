@@ -69,7 +69,15 @@ def _vision_call(image: str) -> str:
         input=[{"role": "user", "content": [{"type": "input_text", "text": "Extract the complete visible table."}, {"type": "input_image", "image_url": image}]}],
         max_output_tokens=6000,
     )
-    return response.output_text or ""
+    if response.output_text:
+        return response.output_text
+    parts = []
+    for item in response.output or []:
+        for content in getattr(item, "content", []) or []:
+            text = getattr(content, "text", None)
+            if text:
+                parts.append(text)
+    return "\n".join(parts)
 
 
 def _generator_call(context: dict[str, Any], policy: dict[str, Any]) -> str:
@@ -279,29 +287,30 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
         action == "explain"
         or scoring.get("status") in {"new_score", "repeat", "mixed_issue"}
     ):
-        data["issues"] = [{
-            "customer_id": item.get("customer_id"),
-            "contract_id": item.get("contract_id"),
-            "customer_name": graph.get("customers", {}).get(
-                item.get("customer_id"), {}
-            ).get("customer_name", "") if item.get("customer_id") else "",
-            "name": item.get("name"),
-            "confirmed": item.get("confirmed"),
-            "why_it_violates_policy": item.get("why_it_violates_policy"),
-            "explanation": "\n\n".join(
-                part for part in (
-                    (
-                        "Why it violates policy: "
-                        + str(item.get("why_it_violates_policy") or "")
-                    ).strip(),
-                    (
-                        "Explanation given to auditor: "
-                        + str(item.get("explanation_for_auditor") or "")
-                    ).strip(),
-                )
-                if part.split(": ", 1)[-1].strip()
-            ),
-        } for item in issues[:10]]
+        issue_contexts = []
+        seen_issue_contexts = set()
+        for item in issues:
+            policy_reason = str(item.get("why_it_violates_policy") or "").strip()
+            auditor_explanation = str(
+                item.get("explanation_for_auditor") or ""
+            ).strip()
+            # The secret narrative is issue-level context. It is repeated on
+            # every customer/contract row in the source data, so keep one
+            # canonical explanation per issue for the response model.
+            key = item.get("name")
+            if key in seen_issue_contexts:
+                continue
+            seen_issue_contexts.add(key)
+            issue_contexts.append({
+                "name": item.get("name"),
+                "confirmed": item.get("confirmed"),
+                "issue_description": graph.get("concern_catalog", {}).get(
+                    item.get("name"), {}
+                ).get("description", ""),
+                "policy_reason": policy_reason,
+                "auditor_explanation": auditor_explanation,
+            })
+        data["issues"] = issue_contexts
     decision = result.get("decision_result") or {}
     data["evidence_package"] = asdict(EvidencePackage(
         status=str(data.get("status") or "not_run"),
@@ -364,6 +373,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         if isinstance(package, dict):
             package = dict(package)
             package.pop("tone", None)
+            package.pop("secret_narrative_samples", None)
             generator_evidence["evidence_package"] = package
         generator_evidence["entity_ids"] = list(generator_evidence.get("entity_ids", []))[:10]
         if result.get("status") == "clarification":
