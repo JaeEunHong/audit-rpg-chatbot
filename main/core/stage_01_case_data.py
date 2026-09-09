@@ -17,6 +17,7 @@ CUSTOMER_LEVEL_ISSUES = {
     "aml_risk",
     "customer_in_tax_haven",
     "connected_customer_exposure_hidden_by_separate_customer_ids",
+    "sanctions_violation",
 }
 
 ISSUE_DESCRIPTIONS = {
@@ -37,15 +38,15 @@ ISSUE_DESCRIPTIONS = {
     "CONTRACT TENOR EXCEEDS MV CURVE HORIZON": "The contract runs beyond the market-value curve horizon.",
     "CUSTOMER RISK DETERIORATES BUT EXPOSURE KEEPS GROWING": "Customer risk worsens while funded exposure continues to increase.",
     "ASSET FINANCED TWICE": "The same asset or VIN is linked to more than one financing contract.",
-    "AML RISK": "The customer or transaction shows indicators of elevated money-laundering risk.",
+    "AML RISK": "The customer or transaction shows general indicators of elevated money-laundering risk, such as a high-risk customer, owner, jurisdiction, sector or adverse-media concern.",
     "INFLATED PRICING": "The financed price appears inflated relative to the asset or market evidence.",
     "RECOVERED_OVERDUE_NOT_DISCLOSED": "Previously recovered overdue exposure was not disclosed in the assessment.",
     "CUSTOMER_IN_DEFAULT_AT_APPROVAL": "The customer was in default when the contract was approved.",
     "FINANCING ONLY NON TRATON BRANDS": "The financing is limited to brands outside the permitted Traton scope.",
     "SANCTIONS VIOLATION": "The customer or transaction appears connected to a sanctions concern.",
     "CUSTOMER IN TAX HAVEN": "The customer is registered or located in a restricted tax-haven jurisdiction.",
-    "AML RISK - CASH PAYMENT": "The transaction shows an elevated money-laundering risk involving cash payment.",
-    "AML RISK - VERY SHORT ACTUAL TENOR": "The actual financing period is unusually short and creates AML concern.",
+    "AML RISK - CASH PAYMENT": "The customer requests or uses cash payment or cash settlement, creating a source-of-funds and traceability concern that requires AML review.",
+    "AML RISK - VERY SHORT ACTUAL TENOR": "The contract is repaid or fully settled unusually soon after start, creating an AML source-of-funds concern that requires documented review.",
 }
 
 
