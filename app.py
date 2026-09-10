@@ -1519,13 +1519,18 @@ ENTITY_COLUMNS = {
 }
 
 
+def _normalize_entity_column(value: object) -> str:
+    """Normalize common spreadsheet header formatting without changing values."""
+    return "".join(character for character in str(value).strip().casefold() if character.isalnum())
+
+
 def spreadsheet_entity_text(file_name: str, content: bytes) -> str:
     if file_name.lower().endswith(".csv"):
-        frame = pd.read_csv(io.BytesIO(content))
+        frame = pd.read_csv(io.BytesIO(content), sep=None, engine="python")
     else:
         frame = pd.read_excel(io.BytesIO(content), sheet_name=0)
     columns = {
-        str(column).strip().lower().replace(" ", ""): column
+        _normalize_entity_column(column): column
         for column in frame.columns
     }
     selected = []
