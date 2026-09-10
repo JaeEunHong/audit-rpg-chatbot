@@ -242,7 +242,14 @@ def _save_auth_cookie(*, demo_mode: bool = False) -> None:
         for key in ("team_id", "team_name", "participant_id", "participant_name", "session_id")
     }
     values["demo_mode"] = "1" if demo_mode else "0"
-    _auth_controller().set(AUTH_COOKIE, _make_auth_token(values), max_age=AUTH_COOKIE_TTL)
+    controller_key = "audit_rpg_auth_controller"
+    if st.session_state.get(controller_key) is None:
+        st.session_state[controller_key] = {}
+    CookieController(key=controller_key).set(
+        AUTH_COOKIE,
+        _make_auth_token(values),
+        max_age=AUTH_COOKIE_TTL,
+    )
 
 
 def logout() -> None:
