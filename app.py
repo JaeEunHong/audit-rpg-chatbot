@@ -668,7 +668,10 @@ def render_participant_page() -> None:
 def render_demo_page(case_data: dict[str, Any]) -> None:
     st.markdown("# Demo workspace")
     st.caption("Watch the team scoreboard while testing a participant chat in the same workspace.")
-    teams = available_teams()
+    teams = [
+        team for team in available_teams()
+        if team["team_id"] in {"DEMO_X", "DEMO_Y", "DEMO_Z"}
+    ]
     selected_team_id = st.selectbox(
         "Demo team",
         [team["team_id"] for team in teams],
@@ -702,7 +705,7 @@ def render_demo_page(case_data: dict[str, Any]) -> None:
         st.rerun()
     rows = leaderboard_rows()
     with st.expander("🏆 Team scoreboard", expanded=False):
-        render_leaderboard(rows, teams, case_data)
+        render_leaderboard(rows, teams, case_data, display_groups=True)
         st.markdown("### Average score per person")
         try:
             participant_rows = participant_score_rows()
@@ -2214,13 +2217,22 @@ def render_audit_page() -> None:
             # Portrait selection is decided once by chat_runtime from the
             # confirmed exact scope. Do not infer special portraits again
             # from individual score events here.
-            st.session_state.portrait_override = None
+            portrait_override = str(updated_scope.get("portrait") or "").strip()
+            if portrait_override:
+                portrait_path = Path(portrait_override)
+                if not portrait_path.is_absolute():
+                    portrait_path = ASSET_DIR / portrait_path
+                st.session_state.portrait_override = str(portrait_path)
+            else:
+                st.session_state.portrait_override = None
             st.session_state.special_mood_label = None
 
             mood = updated_scope.get("mood") or extract_mood(reply)
             st.session_state.current_mood = mood
             st.session_state.portrait_key = (
-                updated_scope.get("portrait")
+                None
+                if portrait_override
+                else updated_scope.get("portrait")
                 or ("checking_details" if st.session_state.pending_upload_review else None)
             )
             st.session_state.pending_upload_review = False

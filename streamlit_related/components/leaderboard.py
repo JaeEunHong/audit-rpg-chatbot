@@ -37,9 +37,20 @@ def leaderboard_summary(rows: list[dict[str, str]], case_data: dict[str, Any]) -
     ]
 
 
-def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], case_data: dict[str, Any]) -> None:
+def render_leaderboard(
+    rows: list[dict[str, str]],
+    teams: list[dict[str, str]],
+    case_data: dict[str, Any],
+    *,
+    display_groups: bool = False,
+) -> None:
     st.subheader("🏆 Team Scoreboard")
     names = {team["team_id"]: team["team_name"] for team in teams}
+    if display_groups:
+        team_groups = {team["team_id"]: team.get("group", "DATA") for team in teams}
+        rows = [{**row, "team_id": team_groups.get(row["team_id"], "DATA")} for row in rows]
+        teams = [{"team_id": group, "team_name": group, "group": group} for group in ("DATA", "PAPER", "AI")]
+        names = {team["team_id"]: team["team_name"] for team in teams}
     summary = leaderboard_summary(rows, case_data)
     summary_by_team = {item["team_id"]: item for item in summary}
     # Keep the scoreboard stable: teams with no scored findings should still
@@ -57,8 +68,9 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
     summary = list(summary_by_team.values())
     for item in summary:
         item["team"] = names.get(item["team_id"], item["team_id"])
-    visible_teams = {f"Team {index}" for index in range(1, 9)}
-    summary = [item for item in summary if item["team"] in visible_teams]
+    if not display_groups:
+        visible_teams = {f"Team {index}" for index in range(1, 9)}
+        summary = [item for item in summary if item["team"] in visible_teams]
     summary.sort(key=lambda item: (-item["score"], item["team"]))
     table_rows = "".join(
         "<tr>"
