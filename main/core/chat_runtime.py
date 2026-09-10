@@ -85,7 +85,6 @@ class ParserResponse(BaseModel):
     request_type: Literal["new", "continue"] = "new"
     requested_details: list[str] = []
     needs_clarification: bool = False
-    filled_values: dict[str, Any] = {}
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -177,11 +176,13 @@ def _build_generator_instructions(
         mode_key = "repeat_short_reaction"
     mode_instructions = {
         "new_score": (
-            "This is a newly discovered confirmed finding. Sound genuinely "
-            "caught off guard, as if Mikael did not know or had forgotten it. "
-            "A brief pause or self-correction is appropriate. Acknowledge the "
-            "finding, then use the supplied explanation naturally without "
-            "turning it into a polished report."
+            "This is a newly discovered confirmed finding. Make the discovery "
+            "reaction unmistakable before stating the finding: start with a "
+            "natural startled pause, brief exclamation, or surprised self-correction, "
+            "as if Mikael did not know or had forgotten it. Do not begin with "
+            "Okay, Yes, Right, or a calm confirmation. Then acknowledge the "
+            "finding and use the supplied explanation naturally without turning "
+            "it into a polished report."
         ),
         "partial_confirmed": (
             "A substantial part of the group is confirmed, but not every record. "
