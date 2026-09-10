@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from html import escape
 from typing import Any
 
-import pandas as pd
 import streamlit as st
 
 
@@ -57,27 +57,36 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
     summary = list(summary_by_team.values())
     for item in summary:
         item["team"] = names.get(item["team_id"], item["team_id"])
+    visible_teams = {f"Team {index}" for index in range(1, 9)}
+    summary = [item for item in summary if item["team"] in visible_teams]
     summary.sort(key=lambda item: (-item["score"], item["team"]))
-    scoreboard_df = pd.DataFrame([
-            {
-                "Rank": index,
-                "Team": item["team"],
-                "Issues found": item["issue_types_found"],
-                "Contracts found": item["contracts_found"],
-                "Score": int(item["score"]),
-            }
-            for index, item in enumerate(summary, start=1)
-        ])
-    st.dataframe(
-        scoreboard_df,
-        hide_index=True,
-        column_config={
-            "Rank": st.column_config.NumberColumn(width="small"),
-            "Team": st.column_config.TextColumn(width="medium"),
-            "Issues found": st.column_config.NumberColumn(width="small"),
-            "Contracts found": st.column_config.NumberColumn(width="small"),
-            "Score": st.column_config.NumberColumn(width="small"),
-        },
-        width=760,
-        height=min(520, 38 * (len(scoreboard_df) + 1) + 8),
+    table_rows = "".join(
+        "<tr>"
+        f"<td>{index}</td><td class='team'>{escape(str(item['team']))}</td>"
+        f"<td>{item['issue_types_found']}</td><td>{item['contracts_found']}</td>"
+        f"<td class='score'>{int(item['score'])}</td>"
+        "</tr>"
+        for index, item in enumerate(summary, start=1)
+    )
+    st.markdown(
+        "<style>"
+        ".scoreboard-wrap{max-width:900px;margin:0 auto;}"
+        ".scoreboard-table{width:100%;border-collapse:separate;border-spacing:0;"
+        "border:1px solid rgba(99,102,241,.16);border-radius:14px;overflow:hidden;"
+        "font-size:17px;color:#334155;background:rgba(255,255,255,.72);"
+        "box-shadow:0 8px 24px rgba(51,65,85,.06);backdrop-filter:blur(8px);}"
+        ".scoreboard-table th{background:linear-gradient(135deg,#eef2ff,#f5f3ff);"
+        "color:#5963a9;text-align:left;font-weight:600;padding:14px 16px;"
+        "letter-spacing:.01em;}"
+        ".scoreboard-table td{padding:13px 16px;border-top:1px solid rgba(148,163,184,.16);"
+        "text-align:right;background:rgba(255,255,255,.62);}"
+        ".scoreboard-table td.team,.scoreboard-table th.team{text-align:left;}"
+        ".scoreboard-table tr:nth-child(even) td{background:rgba(238,242,255,.46);}"
+        ".scoreboard-table td.score{font-weight:650;color:#5963a9;}"
+        "</style>"
+        "<div class='scoreboard-wrap'><table class='scoreboard-table'>"
+        "<thead><tr><th>Rank</th><th class='team'>Team</th>"
+        "<th>Issues found</th><th>Contracts found</th><th>Score</th></tr></thead>"
+        f"<tbody>{table_rows}</tbody></table></div>",
+        unsafe_allow_html=True,
     )

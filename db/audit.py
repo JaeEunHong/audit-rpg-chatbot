@@ -8,6 +8,42 @@ from typing import Any
 from .connection import snowflake_cursor
 
 
+def save_chat_error(
+    *, session_id: str, team_id: str, participant_id: str, message: str,
+    error_type: str, error_message: str, stage: str = "unknown",
+    retry_count: int = 0, response_status: str = "unknown",
+    output_length: int = 0, parse_position: int = -1,
+) -> None:
+    """Store sanitized runtime failures that occur before normal turn logging."""
+    with snowflake_cursor() as cursor:
+        cursor.execute("""CREATE TABLE IF NOT EXISTS chat_error_logs (
+            error_id VARCHAR PRIMARY KEY, session_id VARCHAR, team_id VARCHAR,
+            participant_id VARCHAR, user_message VARCHAR, error_type VARCHAR,
+            error_message VARCHAR, stage VARCHAR, retry_count NUMBER,
+            response_status VARCHAR, output_length NUMBER, parse_position NUMBER,
+            created_at TIMESTAMP_NTZ NOT NULL
+        )""")
+        for column, definition in (
+            ("stage", "VARCHAR"), ("retry_count", "NUMBER"),
+            ("response_status", "VARCHAR"), ("output_length", "NUMBER"),
+            ("parse_position", "NUMBER"),
+        ):
+            cursor.execute(f"ALTER TABLE chat_error_logs ADD COLUMN IF NOT EXISTS {column} {definition}")
+        cursor.execute(
+            """INSERT INTO chat_error_logs
+            (error_id, session_id, team_id, participant_id, user_message,
+             error_type, error_message, stage, retry_count, response_status,
+             output_length, parse_position, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP())""",
+            (
+                str(uuid.uuid4()), session_id, team_id, participant_id,
+                message[:1000], error_type[:120], error_message[:1000],
+                stage[:40], retry_count, response_status[:80], output_length,
+                parse_position,
+            ),
+        )
+
+
 DEFAULT_TEAMS = [
     ("TEAM_AI", "Team 1"),
     ("DATA_1", "Team 2"),

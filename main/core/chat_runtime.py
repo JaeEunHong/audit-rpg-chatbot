@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
+from pydantic import BaseModel
 from conversation_state import ConversationState
 from audit_types import EvidencePackage
 from stage_02_visual_extraction import extract_visible_entities
@@ -25,6 +26,21 @@ PORTRAIT_OPTIONS = [
     "defensive", "frustrated", "what_is_this", "tired", "thinking",
     "checking_details", "examining_data", "analysing",
 ]
+
+
+class JsonGenerationError(Exception):
+    def __init__(self, *, stage: str, retry_count: int, response_status: str,
+                 output_length: int, parse_position: int, message: str):
+        super().__init__(message)
+        self.stage = stage
+        self.retry_count = retry_count
+        self.response_status = response_status
+        self.output_length = output_length
+        self.parse_position = parse_position
+
+
+class MikaelResponse(BaseModel):
+    speech: str
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -49,6 +65,20 @@ PARSER_SCHEMA = {
 @lru_cache(maxsize=1)
 def _client() -> OpenAI:
     return OpenAI()
+
+
+_last_generator_metadata: dict[str, Any] = {}
+
+
+def _json_loads_with_diagnostics(text: str, stage: str) -> dict[str, Any]:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        if os.getenv("AUDIT_DEBUG_JSON") == "1":
+            print(f"[JSON_DEBUG] stage={stage} length={len(text)}")
+            print(f"[JSON_DEBUG] position={exc.pos} tail={text[-500:]!r}")
+            print(f"[JSON_DEBUG] context={text[max(0, exc.pos - 150):exc.pos + 150]!r}")
+        raise
 
 
 def _parser_call(**payload: Any) -> str:
@@ -84,67 +114,142 @@ def _build_generator_instructions(
     context: dict[str, Any], policy: dict[str, Any]
 ) -> str:
     evidence = context.get("evidence") or {}
-    issue_contexts = evidence.get("issues") or []
-    explanation_length_instruction = ""
-    short_reaction_instruction = ""
+    status = str(evidence.get("status") or "")
+    tone = str(policy.get("tone") or "confident")
+    easter_egg = evidence.get("easter_egg_presentation") or {}
     latest_message = str(context.get("latest_auditor_message") or "").strip()
-    if evidence.get("status") == "repeat" and len(latest_message.split()) <= 8:
-        short_reaction_instruction = (
-            "- The auditor is making a short reaction, not asking for a new explanation. "
-            "Reply briefly in one or two spoken sentences. Do not repeat the full "
-            "narrative or evidence.\n"
+    short_reaction = status == "repeat" and len(latest_message.split()) <= 8
+    issue_contexts = evidence.get("issues") or []
+    has_explanation = any(
+        item.get("auditor_explanation") or item.get("policy_reason")
+        for item in issue_contexts
+        if isinstance(item, dict)
+    )
+    mode_key = "small_talk" if status == "small_talk" else status
+    if short_reaction:
+        mode_key = "repeat_short_reaction"
+    mode_instructions = {
+        "new_score": (
+            "This is a newly discovered confirmed finding. Sound genuinely "
+            "caught off guard, as if Mikael did not know or had forgotten it. "
+            "A brief pause or self-correction is appropriate. Acknowledge the "
+            "finding, then use the supplied explanation naturally without "
+            "turning it into a polished report."
+        ),
+        "partial_confirmed": (
+            "A substantial part of the group is confirmed, but not every record. "
+            "Acknowledge the confirmed pattern without claiming universal coverage. "
+            "Use the shared explanation at group level and remain appropriately cautious."
+        ),
+        "mixed_issue": (
+            "The concern is mixed across the group. Push back cautiously on the "
+            "assumption that it applies to everyone. Do not score the unsupported "
+            "members or reveal hidden member counts."
+        ),
+        "repeat": (
+            "This concern was already covered. Sound mildly impatient or tired, "
+            "not newly surprised. If the auditor only reacts briefly, do not repeat "
+            "the full explanation."
+        ),
+        "repeat_short_reaction": (
+            "This is only a short conversational reaction to an earlier answer. "
+            "Reply briefly and naturally; acknowledge it without repeating the "
+            "full evidence or narrative."
+        ),
+        "unsupported": (
+            "The supplied evidence does not confirm the concern. Answer carefully "
+            "and mildly impatiently if appropriate, without claiming the entity has "
+            "no other concerns."
+        ),
+        "clarification": (
+            "Ask only for the single missing clarification. Do not answer the "
+            "underlying audit question yet."
+        ),
+        "small_talk": (
+            "Treat this as a conversational aside. Reply naturally and briefly, "
+            "without mentioning audit fields, evidence, entities, or scoring."
+        ),
+    }.get(mode_key, "Answer the auditor directly using the supplied evidence.")
+    if tone == "embarrassed":
+        tone_instruction = "Use an uncomfortable, caught-off-guard tone without becoming fully apologetic."
+    elif tone in {"annoyed_confident", "annoyed_guarded"}:
+        tone_instruction = "Use restrained impatience, but still answer the actual question and respect confirmed evidence."
+    else:
+        tone_instruction = f"Use the supplied {tone} tone and do not let the evidence rewrite that tone."
+    if easter_egg.get("active"):
+        tone_instruction = (
+            "This is a highly personal Easter-egg finding. Sound genuinely startled "
+            "and caught out, as if Mikael did not expect the auditor to connect this "
+            "specific case to him. Start awkwardly, hesitate, backtrack, or qualify "
+            "before giving the explanation. Do not sound polished, prepared, or "
+            "matter-of-fact. Do not deny the supplied facts or invent a new excuse."
         )
-    if (
-        evidence.get("status") in {"new_score", "partial_confirmed", "repeat"}
-        and issue_contexts
-        and any(
-            item.get("auditor_explanation") or item.get("policy_reason")
-            for item in issue_contexts
+    if has_explanation and not short_reaction and status not in {"small_talk", "clarification"}:
+        length_instruction = (
+            "The evidence includes a real explanation. Give a complete, fluffy "
+            "spoken explanation in roughly 3-5 connected sentences: acknowledge "
+            "the finding, develop the supplied rationale, and add a natural "
+            "reflective transition. Do not compress it into one short summary."
         )
-    ):
-        explanation_length_instruction = (
-            "- This is a scored group with supplied explanation context. "
-            "Write 3-5 complete spoken sentences. Do not stop after one or "
-            "two sentences; connect the finding, the supplied explanation, "
-            "and a reflective qualifier.\n"
+    else:
+        length_instruction = (
+            "Use the amount of speech appropriate to the exchange. Keep a short "
+            "reaction or clarification brief, and do not repeat a full narrative."
         )
     return f"""
-CURRENT RESPONSE INSTRUCTIONS (follow these separately from the evidence):
-- tone: {policy.get('tone', 'confident')}
-- attitude: {policy.get('attitude_style', 'professional and controlled')}
-- rhythm: {policy.get('rhythm_level', 0)}
-- allowed moods: {', '.join(policy.get('allowed_moods') or [])}
-{explanation_length_instruction}
-{short_reaction_instruction}
+CURRENT RESPONSE MODE (selected by Python; follow this over generic style examples):
+- status: {status or 'unknown'}
+- tone: {tone}
+- rhythm guidance: {policy.get('rhythm_level', 0)}
+- {tone_instruction}
+- {"Give the Easter-egg reaction priority over the ordinary mood style." if easter_egg.get("active") else ""}
+- {mode_instructions}
+- {length_instruction}
 
-Use these instructions to shape how Mikael speaks. Do not mention these fields.
-Do not let narrative wording override the current tone. Preserve every fact
-and finding from the evidence, but create fresh spoken dialogue.
-If a portrait override is supplied, return that portrait exactly.
+Do not mention these internal fields. Preserve every fact and finding from the
+evidence, but create fresh spoken dialogue. Python already owns mood and portrait;
+do not choose or return either one.
 """
 def _generator_call(
     context: dict[str, Any], policy: dict[str, Any], max_output_tokens: int = 1200
-) -> str:
+) -> MikaelResponse:
     dynamic_instructions = _build_generator_instructions(context, policy)
-    response = _client().responses.create(
+    response = _client().responses.parse(
         model=os.getenv("AUDIT_GENERATOR_MODEL", GENERATOR_MODEL),
         instructions=GENERATOR_PROMPT.read_text(encoding="utf-8") + dynamic_instructions,
         input=json.dumps(context, ensure_ascii=False),
-        text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}, "mood": {"type": "string", "enum": ["Embarrassed / Caught", "Professional / Controlled", "Guarded / Hesitant", "Defensive / Cornered", "Reluctant / Defeated", "Annoyed / Dismissive"]}, "portrait": {"type": "string", "enum": PORTRAIT_OPTIONS}}, "required": ["speech", "mood", "portrait"]}}},
+        text_format=MikaelResponse,
         max_output_tokens=max_output_tokens,
     )
-    return response.output_text or "{}"
+    global _last_generator_metadata
+    _last_generator_metadata = {
+        "response_status": str(getattr(response, "status", "unknown")),
+        "incomplete_reason": str(getattr(getattr(response, "incomplete_details", None), "reason", "")),
+    }
+    if response.output_parsed is None:
+        raise ValueError("LLM2 returned no structured response.")
+    return response.output_parsed
 
 
 def _generator_json(context: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     """Parse LLM2 output, retrying with more room if JSON was truncated."""
     try:
-        return json.loads(_generator_call(context, policy))
-    except (json.JSONDecodeError, TypeError):
+        return _generator_call(context, policy).model_dump()
+    except Exception:
         try:
-            return json.loads(_generator_call(context, policy, max_output_tokens=2400))
-        except (json.JSONDecodeError, TypeError):
-            return json.loads(_generator_call(context, policy, max_output_tokens=3600))
+            return _generator_call(context, policy, max_output_tokens=2400).model_dump()
+        except Exception:
+            try:
+                return _generator_call(context, policy, max_output_tokens=3600).model_dump()
+            except Exception as exc:
+                raise JsonGenerationError(
+                    stage="llm2",
+                    retry_count=3,
+                    response_status=_last_generator_metadata.get("response_status", "unknown"),
+                    output_length=0,
+                    parse_position=-1,
+                    message=str(exc),
+                ) from exc
 
 
 def _narrowing_reply(result: dict[str, Any], graph: dict[str, Any]) -> str | None:
@@ -202,6 +307,10 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
             if previous_tone and status not in {"new_score", "unsupported"}
             else attitude.get("stage", "confident")
         )
+    if status == "new_score" and tone in {"annoyed_confident", "annoyed_guarded"}:
+        tone = "embarrassed"
+    elif status == "partial_confirmed" and tone in {"annoyed_confident", "annoyed_guarded"}:
+        tone = "guarded"
     mood_map = {
         "embarrassed": ["Embarrassed / Caught"],
         "confident": ["Professional / Controlled"],
@@ -265,6 +374,7 @@ def _easter_egg_presentation(
     return {
         "active": True,
         "portrait_override": portrait,
+        "mood_override": str(record.get("easter_egg_mood") or "").strip(),
         "target_id": record.get("contract_id") or record.get("customer_id"),
     }
 
@@ -365,6 +475,8 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
     if presentation:
         data["easter_egg_presentation"] = presentation
         data["response_policy"]["portrait_override"] = presentation["portrait_override"]
+        if presentation.get("mood_override"):
+            data["response_policy"]["allowed_moods"] = [presentation["mood_override"]]
     data["issue_candidates"] = result.get("issue_candidates", [])
     data["context_routing"] = {
         "state": result.get("state"),
@@ -489,7 +601,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
     result["reply"] = str(generated.get("speech") or "").strip()
     policy = (result.get("evidence") or {}).get("response_policy") or {}
     allowed_moods = policy.get("allowed_moods") or ["Professional / Controlled"]
-    result["mood"] = generated.get("mood") if generated.get("mood") in allowed_moods else allowed_moods[0]
+    result["mood"] = allowed_moods[0]
     state.response_tone = str(policy.get("tone") or "confident")
     if (
         result.get("status") == "new_score"
@@ -498,8 +610,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         state.has_scored_finding = True
     result["portrait"] = (
         policy.get("portrait_override")
-        or generated.get("portrait")
-        or "looks_good"
+        or None
     )
     result["visual_extraction_text"] = image_text or ""
     return result

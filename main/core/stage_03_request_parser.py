@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from copy import deepcopy
 from typing import Any, Callable
@@ -11,6 +12,17 @@ from stage_01_case_data import normalize_compact_id
 
 REQUEST_TYPES = {"new", "continue"}
 REQUEST_ACTIONS = {"overview", "lookup", "explain", "assess", "compare", "small_talk"}
+
+
+def _parse_json_response(text: str, stage: str) -> dict[str, Any]:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        if os.getenv("AUDIT_DEBUG_JSON") == "1":
+            print(f"[JSON_DEBUG] stage={stage} length={len(text)}")
+            print(f"[JSON_DEBUG] position={exc.pos} tail={text[-500:]!r}")
+            print(f"[JSON_DEBUG] context={text[max(0, exc.pos - 150):exc.pos + 150]!r}")
+        raise
 
 
 def resolved_request_from_dict(request: dict[str, Any]) -> ResolvedRequest:
@@ -76,7 +88,7 @@ def parse_conversation_request(
         known_concern_names=known_concern_names or [],
         image_text=image_text,
     )
-    value = json.loads(parser_call(**parser_payload))
+    value = _parse_json_response(parser_call(**parser_payload), "llm1")
     mentioned_entities = []
     seen_entities: set[tuple[str, str]] = set()
     raw_entities = value.get("entities")
@@ -182,7 +194,7 @@ def merge_pending_request(
 
 
 def parse_request(message: str, parser_call: Callable[..., str], **context: Any) -> AuditRequest:
-    value = json.loads(parser_call(message=message, **context))
+    value = _parse_json_response(parser_call(message=message, **context), "llm1")
     return AuditRequest(
         entity_mentions=list(value.get("entity_mentions") or []),
         requested_access=value.get("requested_access"),

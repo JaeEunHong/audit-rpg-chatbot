@@ -41,7 +41,7 @@ import chat_runtime
 from conversation_state import ConversationState
 from stage_08_audit_pipeline import _attitude_stage
 from db.team import create_team
-from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, seed_default_teams, save_turn_bundle
+from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, save_chat_error, seed_default_teams, save_turn_bundle
 from streamlit_related.components.leaderboard import render_leaderboard
 from streamlit_related.components.team_form import render_team_picker
 
@@ -243,7 +243,7 @@ MIKAEL_MOOD_IMAGES = {
         ASSET_DIR / "thinking.jpg",
     ),
     "Annoyed / Dismissive": (
-        ASSET_DIR / "what_is_this.jpg",
+        ASSET_DIR / "annoyed.png",
     ),
     "Checking Records": (
         ASSET_DIR / "checking_details.jpg",
@@ -369,6 +369,7 @@ def image_data_url(path_text: str, image_mtime: float) -> str:
 
 
 GRAPH_PATH = ROOT / "main" / "output" / "case_graph.json"
+EASTER_EGG_CONFIG_PATH = ROOT / "config" / "easter_eggs.json"
 if not GRAPH_PATH.exists():
     raise FileNotFoundError("refactoring/output/case_graph.json is missing")
 
@@ -378,9 +379,36 @@ def load_case_graph(path: str, modified_ns: int) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+@st.cache_data(show_spinner=False)
+def load_easter_egg_config(path: str, modified_ns: int) -> dict[str, Any]:
+    config_path = Path(path)
+    if not config_path.exists():
+        return {"contracts": {}, "customers": {}}
+    return json.loads(config_path.read_text(encoding="utf-8"))
+
+
+def apply_easter_egg_config(graph: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    for entity_type in ("contracts", "customers"):
+        for entity_id, presentation in (config.get(entity_type) or {}).items():
+            record = graph.get(entity_type, {}).get(str(entity_id).upper())
+            if record is None:
+                continue
+            record["is_easter_egg"] = True
+            record["easter_egg_portrait"] = str(presentation.get("portrait") or "")
+            record["easter_egg_mood"] = str(presentation.get("mood") or "")
+    return graph
+
+
 st.session_state.graph_data = load_case_graph(
     str(GRAPH_PATH), GRAPH_PATH.stat().st_mtime_ns
 )
+if EASTER_EGG_CONFIG_PATH.exists():
+    st.session_state.graph_data = apply_easter_egg_config(
+        st.session_state.graph_data,
+        load_easter_egg_config(
+            str(EASTER_EGG_CONFIG_PATH), EASTER_EGG_CONFIG_PATH.stat().st_mtime_ns
+        ),
+    )
 case_data = st.session_state.graph_data
 
 
@@ -401,12 +429,14 @@ DEFAULT_TEAMS = [
     ("DATA_5", "Team 6"),
     ("PAPER_1", "Team 7"),
     ("PAPER_2", "Team 8"),
+    ("TEAM_X", "Team X"),
     ("DEMO_X", "Data X"),
     ("DEMO_Y", "Paper X"),
     ("DEMO_Z", "AI X"),
 ]
 
 PARTICIPANT_NAMES = [
+    "Mikael Agerbo",
     "Marco Wäktare",
     "Ulf Rothmyr",
     "Ninos Gawrieh",
@@ -553,20 +583,19 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
             "<style>[data-testid='stButton'] button {font-size: 16px; padding: 0.55rem 1rem;}</style>",
             unsafe_allow_html=True,
         )
-        _, refresh_col, end_col, _ = st.columns([5, 1, 1, 5])
-        with refresh_col:
-            if st.button("Refresh scoreboard", key="refresh_scoreboard", width="stretch"):
-                st.rerun(scope="fragment")
-        with end_col:
-            if st.button("End session", key="facilitator_end_session", type="primary", width="stretch"):
-                st.session_state.facilitator_ended = True
-                st.rerun()
+        button_row = st.container(width=520, horizontal_alignment="center")
+        with button_row:
+            refresh_col, end_col = st.columns(2)
+            with refresh_col:
+                if st.button("Refresh scoreboard", key="refresh_scoreboard", width="content"):
+                    st.rerun(scope="fragment")
+            with end_col:
+                if st.button("End session", key="facilitator_end_session", type="primary", width="content"):
+                    st.session_state.facilitator_ended = True
+                    st.rerun()
         return
 
     st.caption("Final results grouped by the preset DATA, PAPER, and AI team mapping.")
-    if st.button("Back to scoreboard", key="final_back_to_scoreboard"):
-        st.session_state.facilitator_ended = False
-        st.rerun()
     try:
         participant_rows = participant_score_rows()
     except Exception as exc:
@@ -585,7 +614,7 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
             final_df.groupby(["Group", "Participant"], as_index=False)["Total score"]
             .sum()
         )
-        with st.container(border=True):
+        with st.container(border=True, width=760):
             chart_data = (
                 final_df.groupby("Group", as_index=False)["Total score"]
                 .mean()
@@ -593,34 +622,37 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
             )
             chart = (
                 alt.Chart(chart_data)
-                .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=34)
+                .mark_bar(cornerRadiusTopLeft=7, cornerRadiusTopRight=7, size=58)
                 .encode(
                     x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None, axis=alt.Axis(labelAngle=0)),
                     y=alt.Y("Average score per person:Q", title=None, scale=alt.Scale(zero=True)),
                     color=alt.Color(
                         "Group:N",
-                        title="Team group",
+                        title=None,
                         scale=alt.Scale(
                             domain=["DATA", "PAPER", "AI"],
                             range=["#6F8FA3", "#B28AC2", "#4F46B5"],
                         ),
-                        legend=alt.Legend(orient="top", title=None),
+                        legend=None,
                     ),
                     tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
                 )
-                .properties(width=420, height=170)
+                .properties(width=680, height=280)
                 .configure_view(stroke=None)
                 .configure_axis(
                     domainColor="#D9DDE7",
                     gridColor="#EEF0F5",
                     labelColor="#667085",
-                    labelFontSize=16,
+                    labelFontSize=17,
                     title=None,
                 )
             )
-            st.altair_chart(chart, width=420)
+            st.altair_chart(chart, width=700)
     else:
         st.info("No scored participant data is available yet.")
+    if st.button("Back to scoreboard", key="final_back_to_scoreboard"):
+        st.session_state.facilitator_ended = False
+        st.rerun()
 
 
 def render_participant_page() -> None:
@@ -669,52 +701,53 @@ def render_demo_page(case_data: dict[str, Any]) -> None:
             pass
         st.rerun()
     rows = leaderboard_rows()
-    render_leaderboard(rows, teams, case_data)
-    st.markdown("### Average score per person")
-    try:
-        participant_rows = participant_score_rows()
-    except Exception:
-        participant_rows = []
-    if participant_rows:
-        preview_df = pd.DataFrame([
-            {
-                "Group": TEAM_GROUPS.get(row["team_id"], "DATA"),
-                "Participant": row["participant_name"],
-                "Total score": row["score"],
-            }
-            for row in participant_rows
-        ]).groupby(["Group", "Participant"], as_index=False)["Total score"].sum()
-        chart_data = (
-            preview_df.groupby("Group", as_index=False)["Total score"]
-            .mean()
-            .rename(columns={"Total score": "Average score per person"})
-        )
-        chart = (
-            alt.Chart(chart_data)
-            .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=34)
-            .encode(
-                x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None, axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("Average score per person:Q", title=None),
-                color=alt.Color(
-                    "Group:N", title=None,
-                    scale=alt.Scale(domain=["DATA", "PAPER", "AI"], range=["#6F8FA3", "#B28AC2", "#4F46B5"]),
-                    legend=None,
-                ),
-                tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
+    with st.expander("🏆 Team scoreboard", expanded=False):
+        render_leaderboard(rows, teams, case_data)
+        st.markdown("### Average score per person")
+        try:
+            participant_rows = participant_score_rows()
+        except Exception:
+            participant_rows = []
+        if participant_rows:
+            preview_df = pd.DataFrame([
+                {
+                    "Group": TEAM_GROUPS.get(row["team_id"], "DATA"),
+                    "Participant": row["participant_name"],
+                    "Total score": row["score"],
+                }
+                for row in participant_rows
+            ]).groupby(["Group", "Participant"], as_index=False)["Total score"].sum()
+            chart_data = (
+                preview_df.groupby("Group", as_index=False)["Total score"]
+                .mean()
+                .rename(columns={"Total score": "Average score per person"})
             )
-            .properties(width=420, height=170)
-            .configure_view(stroke=None)
-            .configure_axis(
-                gridColor="#EEF0F5",
-                domainColor="#D9DDE7",
-                labelFontSize=16,
-                title=None,
+            chart = (
+                alt.Chart(chart_data)
+                .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=34)
+                .encode(
+                    x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None, axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("Average score per person:Q", title=None),
+                    color=alt.Color(
+                        "Group:N", title=None,
+                        scale=alt.Scale(domain=["DATA", "PAPER", "AI"], range=["#6F8FA3", "#B28AC2", "#4F46B5"]),
+                        legend=None,
+                    ),
+                    tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
+                )
+                .properties(width=420, height=170)
+                .configure_view(stroke=None)
+                .configure_axis(
+                    gridColor="#EEF0F5",
+                    domainColor="#D9DDE7",
+                    labelFontSize=16,
+                    title=None,
+                )
             )
-        )
-        with st.container(border=True):
-            st.altair_chart(chart, width=420)
-    else:
-        st.info("The KPI chart will appear after the first scored finding.")
+            with st.container(border=True):
+                st.altair_chart(chart, width=420)
+        else:
+            st.info("The KPI chart will appear after the first scored finding.")
     st.divider()
     render_audit_page()
 
@@ -1718,6 +1751,22 @@ def status_message_for_elapsed(elapsed_seconds: float, record_work: bool = False
     return label
 
 
+def should_show_record_work(message: str, files: list[Any] | None) -> bool:
+    if files:
+        return True
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+    if re.search(r"\b(?:se|cust|ast)\s*\d{4,6}\b|\b[A-HJ-NPR-Z0-9]{17}\b", text, re.IGNORECASE):
+        return True
+    reaction_starts = (
+        "why did", "why was", "why were", "how did", "how was", "what made",
+        "right", "yeah", "yes", "no", "well", "okay", "ok", "that's",
+        "it is", "i see", "fair enough", "come on",
+    )
+    return not text.startswith(reaction_starts)
+
+
 def run_agent_turn_with_loading(*, status_slot, messages, score_ledger, data, model: str, record_work: bool):
     def update_status(message: str) -> None:
         status_slot.markdown(render_chat_status(message), unsafe_allow_html=True)
@@ -2123,6 +2172,22 @@ def render_audit_page() -> None:
                 status_slot.empty()
             except Exception as exc:
                 logging.exception("Agent turn failed")
+                try:
+                    save_chat_error(
+                        session_id=st.session_state.get("session_id", ""),
+                        team_id=st.session_state.get("team_id", ""),
+                        participant_id=st.session_state.get("participant_id", ""),
+                        message=str((st.session_state.messages[-1] if st.session_state.messages else {}).get("content") or ""),
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                        stage=str(getattr(exc, "stage", "unknown")),
+                        retry_count=int(getattr(exc, "retry_count", 0)),
+                        response_status=str(getattr(exc, "response_status", "unknown")),
+                        output_length=int(getattr(exc, "output_length", 0)),
+                        parse_position=int(getattr(exc, "parse_position", -1)),
+                    )
+                except Exception:
+                    logging.exception("Failed to save chat runtime error")
                 reply = "[MOOD:Guarded / Hesitant]\nSorry, I didn’t catch that. Could you say it again?"
                 events = [{
                     "tool": "runtime_error",
@@ -2209,7 +2274,7 @@ def render_audit_page() -> None:
                         "spreadsheet_text": spreadsheet_text,
                     }
                 )
-                st.session_state.pending_record_work = True
+                st.session_state.pending_record_work = should_show_record_work(text, prompt.files)
                 st.session_state.pending_agent_turn = True
                 st.rerun()
 
