@@ -7,6 +7,7 @@ import logging
 import os
 import hashlib
 import hmac
+import re
 import sys
 import time
 from pathlib import Path
@@ -1538,10 +1539,31 @@ def spreadsheet_entity_text(file_name: str, content: bytes) -> str:
         source = columns.get(normalized)
         if source is not None:
             selected.append((source, output_name))
-    if not selected:
-        raise ValueError("The spreadsheet has none of the supported entity columns.")
-    compact = frame[[source for source, _ in selected]].copy()
-    compact.columns = [output_name for _, output_name in selected]
+    if selected:
+        compact = frame[[source for source, _ in selected]].copy()
+        compact.columns = [output_name for _, output_name in selected]
+    else:
+        # Headers are not reliable enough to reject a file. Scan values instead
+        # and pass only supported entity identifiers to LLM1.
+        patterns = {
+            "ContractID": re.compile(r"\bSE\d+\b", re.IGNORECASE),
+            "CustomerID": re.compile(r"\bCUST\d+\b", re.IGNORECASE),
+            "AssetID": re.compile(r"\bAST\d+\b", re.IGNORECASE),
+            "VIN": re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b", re.IGNORECASE),
+        }
+        extracted: dict[str, list[str]] = {name: [] for name in patterns}
+        for value in frame.astype(str).to_numpy().ravel():
+            for output_name, pattern in patterns.items():
+                extracted[output_name].extend(pattern.findall(value))
+        compact = pd.DataFrame(
+            {
+                name: list(dict.fromkeys(values))
+                for name, values in extracted.items()
+                if values
+            }
+        )
+    if compact.empty or len(compact.columns) == 0:
+        raise ValueError("The uploaded spreadsheet is empty.")
     compact = compact.fillna("").astype(str)
     return compact.to_markdown(index=False)
 
