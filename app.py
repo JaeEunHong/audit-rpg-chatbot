@@ -5,8 +5,9 @@ import importlib
 import json
 import logging
 import os
+import hashlib
+import hmac
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import altair as alt
+from streamlit_cookies_controller import CookieController
 
 from app_support import DEFAULT_MODEL, extract_mood, image_to_data_url, interview_state_for_mood, load_env, small_talk_reply
 import chat_runtime
@@ -176,7 +178,73 @@ st.set_page_config(page_title="Nordovia Audit RPG", page_icon=":material/search:
 
 load_env()
 
+AUTH_COOKIE = "audit_rpg_auth"
+AUTH_COOKIE_TTL = 2 * 60 * 60
+
+
+def _auth_controller() -> CookieController:
+    return CookieController(key="audit_rpg_auth_controller")
+
+
+def _auth_secret() -> bytes:
+    return os.getenv("APP_AUTH_SECRET") or os.getenv("APP_PASSWORD", "")
+
+
+def _make_auth_token(values: dict[str, str]) -> str:
+    payload = dict(values, expires_at=str(int(time.time()) + AUTH_COOKIE_TTL))
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    signature = hmac.new(_auth_secret().encode(), encoded.encode(), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def _read_auth_token(token: str) -> dict[str, str] | None:
+    try:
+        encoded, signature = str(token).split(".", 1)
+        expected = hmac.new(_auth_secret().encode(), encoded.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        values = json.loads(raw.decode())
+        if int(values.get("expires_at", 0)) <= int(time.time()):
+            return None
+        return values
+    except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+def _restore_auth_cookie() -> None:
+    if st.session_state.get("authenticated"):
+        return
+    values = _read_auth_token(_auth_controller().get(AUTH_COOKIE))
+    if not values:
+        return
+    st.session_state.authenticated = True
+    for key in ("team_id", "team_name", "participant_id", "participant_name", "session_id"):
+        if values.get(key):
+            st.session_state[key] = values[key]
+    st.session_state.app_page = "demo" if values.get("demo_mode") == "1" else "chat"
+    st.session_state.intro_complete = True
+
+
+def _save_auth_cookie(*, demo_mode: bool = False) -> None:
+    values = {
+        key: str(st.session_state.get(key, ""))
+        for key in ("team_id", "team_name", "participant_id", "participant_name", "session_id")
+    }
+    values["demo_mode"] = "1" if demo_mode else "0"
+    _auth_controller().set(AUTH_COOKIE, _make_auth_token(values), max_age=AUTH_COOKIE_TTL)
+
+
+def logout() -> None:
+    _auth_controller().remove(AUTH_COOKIE)
+    for key in ("authenticated", "team_id", "team_name", "participant_id", "participant_name", "session_id"):
+        st.session_state.pop(key, None)
+    st.session_state.app_page = "home"
+    st.rerun()
+
 def require_app_password() -> None:
+    _restore_auth_cookie()
     expected = os.getenv("APP_PASSWORD", "")
     if not expected:
         st.error("APP_PASSWORD is not configured.")
@@ -500,6 +568,8 @@ def render_home_page() -> None:
                 pass
             st.session_state.intro_page = 0
             st.session_state.intro_complete = demo_version
+            st.session_state.authenticated = True
+            _save_auth_cookie(demo_mode=demo_version)
             select_page("demo" if demo_version else "chat")
 
 
@@ -2153,6 +2223,8 @@ def render_audit_page() -> None:
 
 with st.sidebar:
     with st.expander("Settings", expanded=False):
+        if st.button("Log out", key="settings_logout", type="secondary"):
+            logout()
         if st.button("Open Facilitator View", key="settings_facilitator_view", type="secondary"):
             select_page("facilitator")
         if st.session_state.app_page == "demo":
