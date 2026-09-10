@@ -219,7 +219,8 @@ def _restore_auth_cookie() -> None:
     if st.session_state.get("authenticated"):
         return
     controller = _auth_controller()
-    token = controller.get(AUTH_COOKIE)
+    cookies = controller.getAll() or {}
+    token = cookies.get(AUTH_COOKIE)
     if not token and not st.session_state.get("auth_cookie_refreshed"):
         st.session_state.auth_cookie_refreshed = True
         st.rerun()
