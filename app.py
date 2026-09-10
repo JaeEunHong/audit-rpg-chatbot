@@ -51,7 +51,7 @@ run_chat_turn = chat_runtime.run_chat_turn
 
 
 def run_agent_turn(
-    messages, score_ledger, data, model=None, status_callback=None,
+    messages, score_ledger, data, model=None, status_callback=None, record_work=True,
 ):
     latest_user = next((item for item in reversed(messages) if item.get("role") == "user"), {})
     state_before = st.session_state.conversation_state.to_dict()
@@ -94,6 +94,7 @@ def run_agent_turn(
         image_data_urls=list(latest_user.get("images") or []),
         status_callback=status_callback,
         team=st.session_state.get("team_id") or "default",
+        record_work=record_work,
     )
     st.session_state.conversation_state = result.get("conversation_state", st.session_state.conversation_state)
     visual_text = str(result.get("visual_extraction_text") or "").strip()
@@ -249,6 +250,9 @@ MIKAEL_MOOD_IMAGES = {
         ASSET_DIR / "checking_details.jpg",
         ASSET_DIR / "examining_data.jpg",
         ASSET_DIR / "analysing.jpg",
+    ),
+    "Typing": (
+        ASSET_DIR / "typing.png",
     ),
 }
 IDLE_PORTRAITS = (
@@ -1774,13 +1778,14 @@ def run_agent_turn_with_loading(*, status_slot, messages, score_ledger, data, mo
     def update_status(message: str) -> None:
         status_slot.markdown(render_chat_status(message), unsafe_allow_html=True)
 
-    update_status("Mikael is checking the system.")
+    update_status("Mikael is checking the system." if record_work else "Mikael is typing...")
     return run_agent_turn(
         messages,
         score_ledger,
         data,
         model=model,
         status_callback=update_status,
+        record_work=record_work,
     )
 def render_activity(events: list[dict[str, Any]]) -> None:
     runtime_error = next((event.get("output") for event in events if event.get("tool") == "runtime_error"), None)
@@ -2124,7 +2129,13 @@ def render_audit_page() -> None:
     interview_started = any(message.get("role") == "user" for message in st.session_state.messages)
     processing_turn = bool(st.session_state.pending_agent_turn)
     record_work = bool(st.session_state.pending_record_work)
-    portrait_mood = "Checking Records" if processing_turn and record_work else st.session_state.current_mood
+    portrait_mood = (
+        "Checking Records"
+        if processing_turn and record_work
+        else "Typing"
+        if processing_turn
+        else st.session_state.current_mood
+    )
 
     left_col, chat_col = st.columns([0.28, 0.72], gap="large", vertical_alignment="center")
     with left_col:

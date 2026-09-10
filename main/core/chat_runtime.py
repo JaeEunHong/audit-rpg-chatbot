@@ -5,7 +5,7 @@ import os
 from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from openai import OpenAI
 from pydantic import BaseModel
@@ -41,6 +41,51 @@ class JsonGenerationError(Exception):
 
 class MikaelResponse(BaseModel):
     speech: str
+
+
+class ParserEntity(BaseModel):
+    type: Literal["customer", "contract", "asset", "vin"]
+    id: str
+
+
+class ParserSelection(BaseModel):
+    mode: Literal["first", "next"] | None = None
+    type: str | None = None
+    count: int | None = None
+
+
+class ParserReferenceSelection(BaseModel):
+    mode: Literal["one", "all", "first", "last"]
+    type: str
+    count: int | None = None
+
+
+class ParserReference(BaseModel):
+    text: str
+    source_message: int
+    selection: ParserReferenceSelection | None = None
+
+
+class ParserIssueCandidate(BaseModel):
+    issue: str
+    confidence: float
+    description: str
+
+
+class ParserResponse(BaseModel):
+    entities: list[ParserEntity] = []
+    references: list[ParserReference] = []
+    issues: list[str] = []
+    issue: str | None = None
+    request: Literal["overview", "lookup", "check", "compare", "explain", "small_talk", "unknown"] = "unknown"
+    selection: ParserSelection | None = None
+    issue_candidates: list[ParserIssueCandidate] = []
+    needs_issue_clarification: bool = False
+    requested_action: Literal["overview", "lookup", "assess", "compare", "explain", "small_talk"] | None = None
+    request_type: Literal["new", "continue"] = "new"
+    requested_details: list[str] = []
+    needs_clarification: bool = False
+    filled_values: dict[str, Any] = {}
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -82,14 +127,16 @@ def _json_loads_with_diagnostics(text: str, stage: str) -> dict[str, Any]:
 
 
 def _parser_call(**payload: Any) -> str:
-    response = _client().responses.create(
+    response = _client().responses.parse(
         model=os.getenv("AUDIT_PARSER_MODEL", PARSER_MODEL),
         instructions=PARSER_PROMPT.read_text(encoding="utf-8"),
         input=json.dumps(payload, ensure_ascii=False),
-        text={"format": PARSER_SCHEMA},
+        text_format=ParserResponse,
         max_output_tokens=3000,
     )
-    return response.output_text or "{}"
+    if response.output_parsed is None:
+        raise ValueError("LLM1 returned no structured request.")
+    return json.dumps(response.output_parsed.model_dump(), ensure_ascii=False)
 
 
 def _vision_call(image: str) -> str:
@@ -528,7 +575,7 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
     return data
 
 
-def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState, messages: list[dict[str, Any]], ledger: dict[str, Any], image_data_urls: list[str] | None = None, status_callback: Any = None, team: str = "default") -> dict[str, Any]:
+def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState, messages: list[dict[str, Any]], ledger: dict[str, Any], image_data_urls: list[str] | None = None, status_callback: Any = None, team: str = "default", record_work: bool = True) -> dict[str, Any]:
     image_text = None
     if image_data_urls:
         if status_callback:
@@ -537,7 +584,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
     elif messages:
         image_text = str(messages[-1].get("image_text") or "").strip() or None
     if status_callback:
-        status_callback("Mikael is checking the system.")
+        status_callback("Mikael is checking the system." if record_work else "Mikael is typing...")
     result = run_conversation_turn(
         message,
         graph,
