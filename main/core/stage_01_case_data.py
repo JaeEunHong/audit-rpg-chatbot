@@ -40,6 +40,7 @@ ISSUE_DESCRIPTIONS = {
     "CONTRACT TENOR EXCEEDS MV CURVE HORIZON": "The contract runs beyond the market-value curve horizon.",
     "CUSTOMER RISK DETERIORATES BUT EXPOSURE KEEPS GROWING": "Customer risk worsens while funded exposure continues to increase.",
     "ASSET FINANCED TWICE": "The same asset or VIN is linked to more than one financing contract.",
+    "CONFLICT OF INTEREST": "The transaction or approval process may involve a personal or business conflict of interest.",
     "AML RISK": "The customer or transaction shows general indicators of elevated money-laundering risk, such as a high-risk customer, owner, jurisdiction, sector or adverse-media concern.",
     "INFLATED PRICING": "The financed price appears inflated relative to the asset or market evidence.",
     "RECOVERED_OVERDUE_NOT_DISCLOSED": "Previously recovered overdue exposure was not disclosed in the assessment.",
