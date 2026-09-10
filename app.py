@@ -3,6 +3,7 @@ import html
 import io
 import importlib
 import json
+import logging
 import os
 import sys
 import time
@@ -1665,6 +1666,13 @@ def run_agent_turn_with_loading(*, status_slot, messages, score_ledger, data, mo
         status_callback=update_status,
     )
 def render_activity(events: list[dict[str, Any]]) -> None:
+    runtime_error = next((event.get("output") for event in events if event.get("tool") == "runtime_error"), None)
+    if runtime_error:
+        st.error(
+            f"Runtime error: {runtime_error.get('error_type', 'UnknownError')} — "
+            f"{runtime_error.get('message', 'No error message recorded.')}"
+        )
+        return
     debug = next((event.get("output") for event in events if event.get("tool") == "conversation_debug"), None)
     if not debug:
         return
@@ -2049,8 +2057,15 @@ def render_audit_page() -> None:
                 )
                 status_slot.empty()
             except Exception as exc:
+                logging.exception("Agent turn failed")
                 reply = "[MOOD:Guarded / Hesitant]\nSorry, I didn’t catch that. Could you say it again?"
-                events = []
+                events = [{
+                    "tool": "runtime_error",
+                    "output": {
+                        "error_type": type(exc).__name__,
+                        "message": str(exc)[:500],
+                    },
+                }]
                 updated_scope = {}
                 status_slot.markdown(render_chat_status("Mikael cannot reach the case file."), unsafe_allow_html=True)
             previous_role = st.session_state.messages[-1].get("role") if st.session_state.messages else None
