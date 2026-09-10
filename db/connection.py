@@ -38,6 +38,8 @@ def _snowflake_connection():
     missing = sorted(required - kwargs.keys())
     if missing:
         raise RuntimeError("Snowflake configuration is missing: " + ", ".join(missing))
+    kwargs.setdefault("login_timeout", 10)
+    kwargs.setdefault("network_timeout", 10)
     connection = snowflake.connector.connect(**kwargs)
     _connection_state.connection = connection
     return connection
