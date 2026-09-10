@@ -65,7 +65,7 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
                 "Team": item["team"],
                 "Issues found": item["issue_types_found"],
                 "Contracts found": item["contracts_found"],
-                "Score": f"{item['issue_types_found']} × {item['contracts_found']} = {int(item['score'])}",
+                "Score": int(item["score"]),
             }
             for index, item in enumerate(summary, start=1)
         ],
@@ -75,7 +75,7 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
             "Team": st.column_config.TextColumn(width="medium"),
             "Issues found": st.column_config.NumberColumn(width="small"),
             "Contracts found": st.column_config.NumberColumn(width="small"),
-            "Score": st.column_config.TextColumn(width="medium"),
+            "Score": st.column_config.NumberColumn(width="small"),
         },
         width="stretch",
     )
