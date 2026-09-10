@@ -59,7 +59,7 @@ def _parser_call(**payload: Any) -> str:
         instructions=PARSER_PROMPT.read_text(encoding="utf-8"),
         input=json.dumps(payload, ensure_ascii=False),
         text={"format": PARSER_SCHEMA},
-        max_output_tokens=10000,
+        max_output_tokens=3000,
     )
     return response.output_text or "{}"
 
@@ -115,6 +115,14 @@ def _build_generator_instructions(
     evidence = context.get("evidence") or {}
     issue_contexts = evidence.get("issues") or []
     explanation_length_instruction = ""
+    short_reaction_instruction = ""
+    latest_message = str(context.get("latest_auditor_message") or "").strip()
+    if evidence.get("status") == "repeat" and len(latest_message.split()) <= 8:
+        short_reaction_instruction = (
+            "- The auditor is making a short reaction, not asking for a new explanation. "
+            "Reply briefly in one or two spoken sentences. Do not repeat the full "
+            "narrative or evidence.\n"
+        )
     if (
         evidence.get("status") in {"new_score", "partial_confirmed", "repeat"}
         and issue_contexts
@@ -136,22 +144,36 @@ CURRENT RESPONSE INSTRUCTIONS (follow these separately from the evidence):
 - rhythm: {policy.get('rhythm_level', 0)}
 - allowed moods: {', '.join(policy.get('allowed_moods') or [])}
 {explanation_length_instruction}
+{short_reaction_instruction}
 
 Use these instructions to shape how Mikael speaks. Do not mention these fields.
 Do not let narrative wording override the current tone. Preserve every fact
 and finding from the evidence, but create fresh spoken dialogue.
 If a portrait override is supplied, return that portrait exactly.
 """
-def _generator_call(context: dict[str, Any], policy: dict[str, Any]) -> str:
+def _generator_call(
+    context: dict[str, Any], policy: dict[str, Any], max_output_tokens: int = 1200
+) -> str:
     dynamic_instructions = _build_generator_instructions(context, policy)
     response = _client().responses.create(
         model=os.getenv("AUDIT_GENERATOR_MODEL", GENERATOR_MODEL),
         instructions=GENERATOR_PROMPT.read_text(encoding="utf-8") + dynamic_instructions,
         input=json.dumps(context, ensure_ascii=False),
         text={"format": {"type": "json_schema", "name": "mikael_response", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"speech": {"type": "string"}, "mood": {"type": "string", "enum": ["Embarrassed / Caught", "Professional / Controlled", "Guarded / Hesitant", "Defensive / Cornered", "Reluctant / Defeated", "Annoyed / Dismissive"]}, "portrait": {"type": "string", "enum": PORTRAIT_OPTIONS}}, "required": ["speech", "mood", "portrait"]}}},
-        max_output_tokens=500,
+        max_output_tokens=max_output_tokens,
     )
     return response.output_text or "{}"
+
+
+def _generator_json(context: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    """Parse LLM2 output, retrying with more room if JSON was truncated."""
+    try:
+        return json.loads(_generator_call(context, policy))
+    except (json.JSONDecodeError, TypeError):
+        try:
+            return json.loads(_generator_call(context, policy, max_output_tokens=2400))
+        except (json.JSONDecodeError, TypeError):
+            return json.loads(_generator_call(context, policy, max_output_tokens=3600))
 
 
 def _narrowing_reply(result: dict[str, Any], graph: dict[str, Any]) -> str | None:
@@ -488,7 +510,7 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
         result["visual_extraction_text"] = image_text or ""
         return result
     try:
-        generated = json.loads(_generator_call(reply_context, generator_policy))
+        generated = _generator_json(reply_context, generator_policy)
     except (json.JSONDecodeError, TypeError):
         result["reply"] = "Sorry, I didn’t catch that. Could you say it again?"
         result["visual_extraction_text"] = image_text or ""

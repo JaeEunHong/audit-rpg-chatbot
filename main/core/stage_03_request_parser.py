@@ -59,9 +59,17 @@ def parse_conversation_request(
     for entity in extract_explicit_entities(image_text or ""):
         if entity not in explicit_entities:
             explicit_entities.append(entity)
+    entity_counts: dict[str, int] = {}
+    for entity in explicit_entities:
+        entity_type = entity["type"]
+        entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1
     parser_payload = dict(
         current_message={"speaker": "auditor", "content": message},
-        explicit_entities=explicit_entities,
+        explicit_entities=[],
+        explicit_entity_summary={
+            "counts": entity_counts,
+            "sample": explicit_entities[:5],
+        },
         latest_messages=latest_messages[-3:],
         active_context=active_context or {},
         pending_request=pending_request or {},
@@ -69,23 +77,6 @@ def parse_conversation_request(
         image_text=image_text,
     )
     value = json.loads(parser_call(**parser_payload))
-    expected_ids = set(re.findall(
-        r"\b(?:SE\s*\d{6}|CUST\s*\d{1,4}|AST\s*\d{6}|[A-HJ-NPR-Z0-9]{17})\b",
-        image_text or "",
-        re.IGNORECASE,
-    ))
-    returned_ids = {
-        str(item.get("id") or "").replace(" ", "").upper()
-        for item in value.get("entities", value.get("mentioned_entities", []))
-    }
-    normalized_expected = {item.replace(" ", "").upper() for item in expected_ids}
-    if normalized_expected - returned_ids:
-        parser_payload["retry_instruction"] = (
-            "The attached Markdown contains visible entity IDs that are missing "
-            "from entities. Return every visible customer, contract, asset, and "
-            "VIN ID. Keep the issue and request unchanged."
-        )
-        value = json.loads(parser_call(**parser_payload))
     mentioned_entities = []
     seen_entities: set[tuple[str, str]] = set()
     raw_entities = value.get("entities")

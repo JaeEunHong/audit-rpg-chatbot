@@ -5,8 +5,6 @@ import importlib
 import json
 import logging
 import os
-import hashlib
-import hmac
 import re
 import sys
 import time
@@ -37,7 +35,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import altair as alt
-from streamlit_cookies_controller import CookieController
 
 from app_support import DEFAULT_MODEL, extract_mood, image_to_data_url, interview_state_for_mood, load_env, small_talk_reply
 import chat_runtime
@@ -180,87 +177,14 @@ st.set_page_config(page_title="Nordovia Audit RPG", page_icon=":material/search:
 
 load_env()
 
-AUTH_COOKIE = "audit_rpg_auth"
-AUTH_COOKIE_TTL = 2 * 60 * 60
-
-
-def _auth_controller() -> CookieController:
-    return CookieController(key="audit_rpg_auth_controller")
-
-
-def _auth_secret() -> bytes:
-    return os.getenv("APP_AUTH_SECRET") or os.getenv("APP_PASSWORD", "")
-
-
-def _make_auth_token(values: dict[str, str]) -> str:
-    payload = dict(values, expires_at=str(int(time.time()) + AUTH_COOKIE_TTL))
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = hmac.new(_auth_secret().encode(), encoded.encode(), hashlib.sha256).hexdigest()
-    return f"{encoded}.{signature}"
-
-
-def _read_auth_token(token: str) -> dict[str, str] | None:
-    try:
-        encoded, signature = str(token).split(".", 1)
-        expected = hmac.new(_auth_secret().encode(), encoded.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            return None
-        raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-        values = json.loads(raw.decode())
-        if int(values.get("expires_at", 0)) <= int(time.time()):
-            return None
-        return values
-    except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
-
-
-def _restore_auth_cookie() -> None:
-    if st.session_state.get("authenticated"):
-        return
-    controller = _auth_controller()
-    cookies = controller.getAll() or {}
-    token = cookies.get(AUTH_COOKIE)
-    if not token and not st.session_state.get("auth_cookie_refreshed"):
-        st.session_state.auth_cookie_refreshed = True
-        st.rerun()
-    values = _read_auth_token(token)
-    if not values:
-        return
-    st.session_state.auth_cookie_refreshed = False
-    st.session_state.authenticated = True
-    for key in ("team_id", "team_name", "participant_id", "participant_name", "session_id"):
-        if values.get(key):
-            st.session_state[key] = values[key]
-    st.session_state.app_page = "demo" if values.get("demo_mode") == "1" else "chat"
-    st.session_state.intro_complete = True
-
-
-def _save_auth_cookie(*, demo_mode: bool = False) -> None:
-    values = {
-        key: str(st.session_state.get(key, ""))
-        for key in ("team_id", "team_name", "participant_id", "participant_name", "session_id")
-    }
-    values["demo_mode"] = "1" if demo_mode else "0"
-    controller_key = "audit_rpg_auth_controller"
-    if st.session_state.get(controller_key) is None:
-        st.session_state[controller_key] = {}
-    CookieController(key=controller_key).set(
-        AUTH_COOKIE,
-        _make_auth_token(values),
-        max_age=AUTH_COOKIE_TTL,
-    )
-
 
 def logout() -> None:
-    _auth_controller().remove(AUTH_COOKIE)
     for key in ("authenticated", "team_id", "team_name", "participant_id", "participant_name", "session_id"):
         st.session_state.pop(key, None)
     st.session_state.app_page = "home"
     st.rerun()
 
 def require_app_password() -> None:
-    _restore_auth_cookie()
     expected = os.getenv("APP_PASSWORD", "")
     if not expected:
         st.error("APP_PASSWORD is not configured.")
@@ -619,7 +543,6 @@ def render_home_page() -> None:
             st.session_state.intro_complete = demo_version
             st.session_state.authenticated = True
             st.session_state.demo_mode = demo_version
-            _save_auth_cookie(demo_mode=demo_version)
             st.session_state.pending_auth_navigation = True
             st.rerun()
 
@@ -1675,7 +1598,7 @@ def render_chat_row(message: dict, previous_role: str | None = None) -> str:
 def render_chat_thread(messages: list[dict], pending: bool = False, record_work: bool = False):
     status_slot = None
     if not messages:
-        with st.container(height=300):
+        with st.container(height=420):
             opening = {
                 "role": "assistant",
                 "content": opening_message(),
@@ -1690,14 +1613,18 @@ def render_chat_thread(messages: list[dict], pending: bool = False, record_work:
         return status_slot
 
     previous_role = None
-    with st.container(height=300, key="chat_thread"):
+    with st.container(height=420, key="chat_thread"):
         for message in messages:
             row = render_chat_row(message, previous_role)
             if not row:
                 continue
             st.markdown(row, unsafe_allow_html=True)
-            if message.get("role") == "assistant" and message.get("tool_events"):
-                with st.expander("Activity", expanded=st.session_state.show_activity and st.session_state.app_page == "demo"):
+            if (
+                message.get("role") == "assistant"
+                and message.get("tool_events")
+                and st.session_state.app_page == "demo"
+            ):
+                with st.expander("Activity", expanded=st.session_state.show_activity):
                     render_activity(message["tool_events"])
             previous_role = "user" if message.get("role") == "user" else "assistant"
         if pending:

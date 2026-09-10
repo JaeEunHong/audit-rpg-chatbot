@@ -129,6 +129,12 @@ was reckless. Confirm the record and add a restrained, self-protective qualifier
 instead. The early conversation should sound like Mikael is still trying to
 minimize the significance of the finding, not eagerly confessing to it.
 
+When the auditor sends only a short reaction or acknowledgement, such as
+"yeah, right", "that's not great", or "I see", treat it as a conversational
+continuation rather than a new request. Reply in one or two spoken sentences,
+acknowledge the reaction, and do not repeat the full evidence or prior
+explanation.
+
 Distinguish a qualifier from an explanation:
 - A qualifier briefly minimizes the significance of a confirmed finding, for
   example: "It wasn't treated as a major exception at the time." This is allowed

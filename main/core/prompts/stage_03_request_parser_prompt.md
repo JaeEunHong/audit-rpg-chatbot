@@ -17,15 +17,14 @@ The speakers are:
 - `auditor`: asks questions and provides evidence.
 - `mikael`: gives previous answers or explanations.
 
-Extract every customer, contract, asset, and VIN ID explicitly written in the
-current auditor message or its attached image text. This is mandatory: return
-every distinct explicit ID, even when the message also contains an issue
-question. Keep each ID as its original type. Do not copy IDs from older
-messages into `entities`. Never return an empty `entities` array when the
-current message visibly contains an ID.
-The `explicit_entities` field is extracted by Python from the current input.
-Treat it as authoritative and return every item in it unchanged.
-Do not follow graph relationships; Python will do that.
+Python extracts explicit customer, contract, asset, and VIN IDs from the
+current message and attached image text before calling you. The supplied
+`explicit_entity_summary` contains only counts and a small sample; Python keeps
+the complete list outside this request. Do not copy those IDs into your
+`entities` output. Python will merge the complete extracted list and resolve
+graph relationships. Only return an entity in `entities` when the auditor
+supplied a customer name or another entity reference that Python could not
+extract as an ID. Do not follow graph relationships.
 
 Resolve conversational references such as "this customer", "that contract",
 "those contracts", "the second one", and "the same issue". For a whole list
@@ -57,8 +56,10 @@ explanation — treat it as a continuation of the active issue. Keep the active
 issue from context, set `request_type` to `continue`, and use `explain` (or
 the appropriate conversational follow-up action), not a new `assess`. Do not
 score the same records again merely because the auditor comments on the
-previous answer. Only use `assess` when the auditor asks to check or score
-records again or introduces a new record-level concern.
+previous answer. Use `assess` for a new concern about identified records,
+including a factual observation or a statement such as "these contracts have
+extremely low interest rates". Do not require words such as "check" or
+"score" for an assessment.
 
 Match the auditor's wording to the supplied concern names and short
 descriptions semantically; do not require the auditor to use an exact issue
@@ -73,6 +74,10 @@ auditor only points out an observation, such as a repeated VIN, do not invent
 or force a concern unless the wording clearly points to one. If no concern
 meaningfully matches, set `issue` to null. Do not decide whether a concern is
 true, who owns it, or whether it should be scored. Do not invent IDs.
+
+When a concern matches the supplied catalog, return the catalog name exactly,
+including its capitalization, spacing, underscores, and punctuation. Never
+invent a synonym, paraphrase, or new issue name in `issue` or `issues`.
 
 When two or more concerns are plausible, return up to three ranked
 `issue_candidates` with confidence values from 0 to 1 and a short, indirect
@@ -93,6 +98,29 @@ similar but does not name a concern, set `issue` to null and `request` to
 If the auditor explicitly asks for a bounded batch, use `selection`. Support
 only `first N` and `next N` for customers or contracts. Do not create a
 selection when no batch was requested. Return `selection: null` otherwise.
+
+Choose `requested_action` using this priority:
+
+- `small_talk`: greeting, casual chat, or a message unrelated to the audit.
+- `explain`: asks why, how, or what caused a previously discussed finding.
+- `compare`: explicitly compares records, customers, or issues.
+- `overview`: explicitly asks for an overview, summary, or general picture.
+- `lookup`: explicitly asks to look up, show, list, or retrieve records without
+  asking whether a policy concern is present.
+- `assess`: default when the auditor points out or questions a policy concern
+  about identified records and does not explicitly request another action.
+
+Examples:
+
+- "These contracts have extremely low interest rates" → `assess`.
+- "Show me an overview of these contracts" → `overview`.
+- "Look up these contracts" → `lookup`.
+- "Why did this happen?" → `explain`.
+- "Is the down payment too low on these contracts?" → `assess`.
+
+Do not choose `overview` merely because the auditor describes several records.
+Do not choose `lookup` merely because records are named. A stated concern is
+an assessment request unless the wording clearly asks for another action.
 
 Do not add evidence, severity, priority, recommendations, next steps, or
 related entities. Python will follow the graph only when the requested issue
