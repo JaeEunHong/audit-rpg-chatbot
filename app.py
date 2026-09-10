@@ -218,9 +218,16 @@ def _read_auth_token(token: str) -> dict[str, str] | None:
 def _restore_auth_cookie() -> None:
     if st.session_state.get("authenticated"):
         return
-    values = _read_auth_token(_auth_controller().get(AUTH_COOKIE))
+    controller = _auth_controller()
+    token = controller.get(AUTH_COOKIE)
+    if not token and not st.session_state.get("auth_cookie_refreshed"):
+        st.session_state.auth_cookie_refreshed = True
+        controller.refresh()
+        st.rerun()
+    values = _read_auth_token(token)
     if not values:
         return
+    st.session_state.auth_cookie_refreshed = False
     st.session_state.authenticated = True
     for key in ("team_id", "team_name", "participant_id", "participant_name", "session_id"):
         if values.get(key):
