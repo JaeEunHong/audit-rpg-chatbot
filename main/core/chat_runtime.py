@@ -73,18 +73,14 @@ class ParserIssueCandidate(BaseModel):
 
 
 class ParserResponse(BaseModel):
-    entities: list[ParserEntity] = []
-    references: list[ParserReference] = []
     issues: list[str] = []
     issue: str | None = None
     request: Literal["overview", "lookup", "check", "compare", "explain", "small_talk", "unknown"] = "unknown"
-    selection: ParserSelection | None = None
     issue_candidates: list[ParserIssueCandidate] = []
     needs_issue_clarification: bool = False
     requested_action: Literal["overview", "lookup", "assess", "compare", "explain", "small_talk"] | None = None
     request_type: Literal["new", "continue"] = "new"
-    requested_details: list[str] = []
-    needs_clarification: bool = False
+    selection: ParserSelection | None = None
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -126,16 +122,24 @@ def _json_loads_with_diagnostics(text: str, stage: str) -> dict[str, Any]:
 
 
 def _parser_call(**payload: Any) -> str:
-    response = _client().responses.parse(
-        model=os.getenv("AUDIT_PARSER_MODEL", PARSER_MODEL),
-        instructions=PARSER_PROMPT.read_text(encoding="utf-8"),
-        input=json.dumps(payload, ensure_ascii=False),
-        text_format=ParserResponse,
-        max_output_tokens=3000,
-    )
-    if response.output_parsed is None:
-        raise ValueError("LLM1 returned no structured request.")
-    return json.dumps(response.output_parsed.model_dump(), ensure_ascii=False)
+    last_error: Exception | None = None
+    for max_output_tokens in (2500, 4000, 5000):
+        try:
+            response = _client().responses.parse(
+                model=os.getenv("AUDIT_PARSER_MODEL", PARSER_MODEL),
+                instructions=PARSER_PROMPT.read_text(encoding="utf-8"),
+                input=json.dumps(payload, ensure_ascii=False),
+                text_format=ParserResponse,
+                max_output_tokens=max_output_tokens,
+            )
+            if response.output_parsed is None:
+                raise ValueError("LLM1 returned no structured request.")
+            return json.dumps(response.output_parsed.model_dump(), ensure_ascii=False)
+        except Exception as exc:
+            if "Invalid schema" in str(exc) or "invalid_json_schema" in str(exc):
+                raise
+            last_error = exc
+    raise last_error or ValueError("LLM1 request failed.")
 
 
 def _vision_call(image: str) -> str:
@@ -164,7 +168,14 @@ def _build_generator_instructions(
     tone = str(policy.get("tone") or "confident")
     easter_egg = evidence.get("easter_egg_presentation") or {}
     latest_message = str(context.get("latest_auditor_message") or "").strip()
-    short_reaction = status == "repeat" and len(latest_message.split()) <= 8
+    reaction_markers = (
+        "but ", "that's concerning", "that is concerning", "not great",
+        "this is bad", "this looks bad", "i see", "yeah right", "fair point",
+    )
+    short_reaction = (
+        len(latest_message.split()) <= 10
+        and any(latest_message.lower().startswith(marker) for marker in reaction_markers)
+    )
     issue_contexts = evidence.get("issues") or []
     has_explanation = any(
         item.get("auditor_explanation") or item.get("policy_reason")
@@ -173,7 +184,7 @@ def _build_generator_instructions(
     )
     mode_key = "small_talk" if status == "small_talk" else status
     if short_reaction:
-        mode_key = "repeat_short_reaction"
+        mode_key = "short_reaction"
     mode_instructions = {
         "new_score": (
             "This is a newly discovered confirmed finding. Make the discovery "
@@ -199,10 +210,12 @@ def _build_generator_instructions(
             "not newly surprised. If the auditor only reacts briefly, do not repeat "
             "the full explanation."
         ),
-        "repeat_short_reaction": (
+        "short_reaction": (
             "This is only a short conversational reaction to an earlier answer. "
-            "Reply briefly and naturally; acknowledge it without repeating the "
-            "full evidence or narrative."
+            "Reply briefly and naturally; acknowledge the discomfort or concern "
+            "without repeating the full evidence, listing issue choices, or asking "
+            "which concern to focus on. Let Mikael hesitate or mumble slightly "
+            "instead of taking control of the discussion."
         ),
         "unsupported": (
             "The supplied evidence does not confirm the concern. Answer carefully "
