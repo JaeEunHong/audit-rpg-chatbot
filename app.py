@@ -458,6 +458,27 @@ DEFAULT_TEAMS = [
     ("DEMO_Z", "AI X"),
 ]
 
+PARTICIPANT_NAMES = [
+    "Marco Wäktare",
+    "Ulf Rothmyr",
+    "Ninos Gawrieh",
+    "Kenza Idrissi Amraoui",
+    "Camilla Lövgren",
+    "Katerina Svancer",
+    "Markus Patschula",
+    "Kristin Stützer",
+    "Pamela Regazzo",
+    "Maike Rollinger",
+    "Michael Kaiser",
+    "Ana Carolina Cruz",
+    "Paola Lombardi",
+    "Marigona Gerxhaliu",
+    "Zeladina Hadziahmetagic",
+    "Lorena Gateza",
+    "Veranika Tsikhanenka",
+    "Wesley Zorzim",
+]
+
 
 @st.cache_resource(show_spinner=False)
 def initialize_audit_storage(cache_version: str = "teams-v3") -> bool:
@@ -544,10 +565,11 @@ def render_home_page() -> None:
         if demo_version:
             participant_name = "Demo participant"
         else:
-            participant_name = st.text_input(
+            participant_name = st.selectbox(
                 "Your name",
-                placeholder="Enter your name",
-                key="participant_name_input",
+                [""] + PARTICIPANT_NAMES,
+                format_func=lambda name: "Select your name" if not name else name,
+                key="participant_name_select",
                 label_visibility="collapsed",
             )
         if st.button("Enter review room", key="join_team", type="primary", width="stretch"):
