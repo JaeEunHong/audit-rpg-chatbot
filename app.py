@@ -14,8 +14,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 CORE_DIR = ROOT / "main" / "core"
-if str(CORE_DIR) not in sys.path:
-    sys.path.insert(0, str(CORE_DIR))
+core_path = str(CORE_DIR)
+if core_path in sys.path:
+    sys.path.remove(core_path)
+sys.path.insert(0, core_path)
+legacy_core_path = str(ROOT / "exp" / "core")
+while legacy_core_path in sys.path:
+    sys.path.remove(legacy_core_path)
 # The deployed app uses main/core. Do not put the legacy exp/core modules
 # ahead of it: both trees contain top-level module names such as audit_types.
 legacy_audit_types = sys.modules.get("audit_types")
