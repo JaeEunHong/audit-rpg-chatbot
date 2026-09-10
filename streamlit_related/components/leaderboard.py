@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 
@@ -38,7 +39,6 @@ def leaderboard_summary(rows: list[dict[str, str]], case_data: dict[str, Any]) -
 
 def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], case_data: dict[str, Any]) -> None:
     st.subheader("🏆 Team Scoreboard")
-    st.caption("Score = issues found × contracts found")
     names = {team["team_id"]: team["team_name"] for team in teams}
     summary = leaderboard_summary(rows, case_data)
     summary_by_team = {item["team_id"]: item for item in summary}
@@ -58,8 +58,7 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
     for item in summary:
         item["team"] = names.get(item["team_id"], item["team_id"])
     summary.sort(key=lambda item: (-item["score"], item["team"]))
-    st.dataframe(
-        [
+    scoreboard_df = pd.DataFrame([
             {
                 "Rank": index,
                 "Team": item["team"],
@@ -68,7 +67,9 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
                 "Score": int(item["score"]),
             }
             for index, item in enumerate(summary, start=1)
-        ],
+        ])
+    st.dataframe(
+        scoreboard_df,
         hide_index=True,
         column_config={
             "Rank": st.column_config.NumberColumn(width="small"),
@@ -77,5 +78,6 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
             "Contracts found": st.column_config.NumberColumn(width="small"),
             "Score": st.column_config.NumberColumn(width="small"),
         },
-        width="stretch",
+        width=760,
+        height=min(520, 38 * (len(scoreboard_df) + 1) + 8),
     )

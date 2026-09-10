@@ -451,7 +451,7 @@ def render_intro_wizard() -> None:
     pages = [
         ("Who is Mikael?", "You are meeting Mikael von Geld, a senior credit manager with years of experience defending the portfolio and the decisions behind it. He knows the business, the relationships, and exactly how to make an uncomfortable question sound complicated."),
         ("Build your case", "Find something that looks off.\n\nBring Mikael the contracts or customers behind it, but keep each message focused on one issue. Throw too many unrelated suspicions at him at once, and he’ll only get more confident… and more annoying."),
-        ("File upload tips", "Upload a screenshot, Excel file, or CSV with only the relevant Contract IDs, Customer IDs, Asset IDs, or VINs. Keep groups around 150 records or fewer — if the file is too large, Mikael may ask you to narrow it down."),
+        ("File upload tips", "Upload a screenshot, Excel file, or CSV containing the Contract IDs or Customer IDs where you found something unusual. You can also copy and paste the IDs directly into the chat.\n\nIf you include too many records, Mikael may ask you to narrow the group down. If a screenshot is too small or unclear to read, try uploading a clearer, larger version—or simply copy and paste the IDs into the chat."),
     ]
     page = st.session_state.intro_page
     title, body = pages[page]
@@ -547,25 +547,26 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
         teams = available_teams()
         rows = []
         st.caption(f"Snowflake scoreboard unavailable; showing an empty preview. ({exc})")
-    st.markdown("# Facilitator dashboard")
     if not st.session_state.facilitator_ended:
-        st.caption("Team scores refresh automatically while the session is running.")
-        back_col, home_col = st.columns(2)
-        with back_col:
-            if st.button("Back to chat", key="facilitator_back"):
-                select_page("chat")
-        with home_col:
-            if st.button("Change team", key="facilitator_home"):
-                st.session_state.team_id = ""
-                st.session_state.team_name = ""
-                select_page("home")
         render_leaderboard(rows, teams, case_data)
-        if st.button("End session", key="facilitator_end_session", type="primary"):
-            st.session_state.facilitator_ended = True
-            st.rerun()
+        st.markdown(
+            "<style>[data-testid='stButton'] button {font-size: 16px; padding: 0.55rem 1rem;}</style>",
+            unsafe_allow_html=True,
+        )
+        _, refresh_col, end_col, _ = st.columns([5, 1, 1, 5])
+        with refresh_col:
+            if st.button("Refresh scoreboard", key="refresh_scoreboard", width="stretch"):
+                st.rerun(scope="fragment")
+        with end_col:
+            if st.button("End session", key="facilitator_end_session", type="primary", width="stretch"):
+                st.session_state.facilitator_ended = True
+                st.rerun()
         return
 
     st.caption("Final results grouped by the preset DATA, PAPER, and AI team mapping.")
+    if st.button("Back to scoreboard", key="final_back_to_scoreboard"):
+        st.session_state.facilitator_ended = False
+        st.rerun()
     try:
         participant_rows = participant_score_rows()
     except Exception as exc:
@@ -585,7 +586,6 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
             .sum()
         )
         with st.container(border=True):
-            st.dataframe(final_df, hide_index=True, width="stretch")
             chart_data = (
                 final_df.groupby("Group", as_index=False)["Total score"]
                 .mean()
@@ -593,9 +593,9 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
             )
             chart = (
                 alt.Chart(chart_data)
-                .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=44)
+                .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=34)
                 .encode(
-                    x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None),
+                    x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None, axis=alt.Axis(labelAngle=0)),
                     y=alt.Y("Average score per person:Q", title=None, scale=alt.Scale(zero=True)),
                     color=alt.Color(
                         "Group:N",
@@ -608,17 +608,17 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
                     ),
                     tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
                 )
-                .properties(height=220)
+                .properties(width=420, height=170)
                 .configure_view(stroke=None)
                 .configure_axis(
                     domainColor="#D9DDE7",
                     gridColor="#EEF0F5",
                     labelColor="#667085",
-                    labelFontSize=14,
+                    labelFontSize=16,
                     title=None,
                 )
             )
-            st.altair_chart(chart, width="stretch")
+            st.altair_chart(chart, width=420)
     else:
         st.info("No scored participant data is available yet.")
 
@@ -691,9 +691,9 @@ def render_demo_page(case_data: dict[str, Any]) -> None:
         )
         chart = (
             alt.Chart(chart_data)
-            .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=48)
+            .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, size=34)
             .encode(
-                x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None),
+                x=alt.X("Group:N", sort=["DATA", "PAPER", "AI"], title=None, axis=alt.Axis(labelAngle=0)),
                 y=alt.Y("Average score per person:Q", title=None),
                 color=alt.Color(
                     "Group:N", title=None,
@@ -702,17 +702,17 @@ def render_demo_page(case_data: dict[str, Any]) -> None:
                 ),
                 tooltip=["Group:N", alt.Tooltip("Average score per person:Q", format=".2f")],
             )
-            .properties(height=220)
+            .properties(width=420, height=170)
             .configure_view(stroke=None)
             .configure_axis(
                 gridColor="#EEF0F5",
                 domainColor="#D9DDE7",
-                labelFontSize=14,
+                labelFontSize=16,
                 title=None,
             )
         )
         with st.container(border=True):
-            st.altair_chart(chart, width="stretch")
+            st.altair_chart(chart, width=420)
     else:
         st.info("The KPI chart will appear after the first scored finding.")
     st.divider()
