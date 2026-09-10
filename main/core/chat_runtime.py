@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ PARSER_SCHEMA = {
 }
 
 
+@lru_cache(maxsize=1)
 def _client() -> OpenAI:
     return OpenAI()
 

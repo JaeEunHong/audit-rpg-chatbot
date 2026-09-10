@@ -40,7 +40,7 @@ from app_support import DEFAULT_MODEL, extract_mood, image_to_data_url, intervie
 import chat_runtime
 from conversation_state import ConversationState
 from stage_08_audit_pipeline import _attitude_stage
-from db.team import create_team, list_teams
+from db.team import create_team
 from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, seed_default_teams, save_turn_bundle
 from streamlit_related.components.leaderboard import render_leaderboard
 from streamlit_related.components.team_form import render_team_picker
@@ -440,15 +440,6 @@ def initialize_audit_storage(cache_version: str = "teams-v3") -> bool:
 
 @st.cache_data(ttl=5, show_spinner=False)
 def available_teams() -> list[dict[str, str]]:
-    try:
-        # Bump this version when the seeded team registry changes. The short
-        # TTL also lets facilitator/demo views pick up Snowflake changes quickly.
-        initialize_audit_storage("teams-v4")
-        teams = list_teams()
-        if teams:
-            return [dict(team, group=team.get("group") or TEAM_GROUPS.get(team["team_id"], "DATA")) for team in teams]
-    except Exception:
-        pass
     return [
         {"team_id": team_id, "team_name": name, "group": TEAM_GROUPS.get(team_id, "DATA")}
         for team_id, name in DEFAULT_TEAMS
