@@ -368,7 +368,7 @@ MIKAEL_OPENING_MESSAGE = (
 def opening_message() -> str:
     participant_name = str(st.session_state.get("participant_name") or "").strip()
     first_name = participant_name.split(maxsplit=1)[0] if participant_name else ""
-    greeting = f"Good morning, {first_name}. " if first_name else ""
+    greeting = f"Good morning, {first_name}.\n" if first_name else ""
     return greeting + MIKAEL_OPENING_MESSAGE
 
 
