@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import io
 import json
 import os
 from dataclasses import asdict
@@ -9,8 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
-from PIL import Image, ImageEnhance, ImageOps
-
 from conversation_state import ConversationState
 from audit_types import EvidencePackage
 from stage_02_visual_extraction import extract_visible_entities
@@ -65,11 +61,10 @@ def _parser_call(**payload: Any) -> str:
 
 
 def _vision_call(image: str) -> str:
-    image = _prepare_visual_image(image)
     response = _client().responses.create(
-        model=os.getenv("AUDIT_VISUAL_MODEL", "gpt-5.6"),
+        model=os.getenv("AUDIT_VISUAL_MODEL", "gpt-4.1"),
         instructions=(ROOT / "prompts" / "stage_02_visual_extraction_prompt.md").read_text(encoding="utf-8"),
-        input=[{"role": "user", "content": [{"type": "input_text", "text": "Extract the complete visible table."}, {"type": "input_image", "image_url": image}]}],
+        input=[{"role": "user", "content": [{"type": "input_text", "text": "Extract the complete visible table."}, {"type": "input_image", "image_url": image, "detail": "high"}]}],
         max_output_tokens=6000,
     )
     if response.output_text:
@@ -81,32 +76,6 @@ def _vision_call(image: str) -> str:
             if text:
                 parts.append(text)
     return "\n".join(parts)
-
-
-def _prepare_visual_image(image: str) -> str:
-    """Improve screenshots whose visible text is small before sending them to vision."""
-    if not image.startswith("data:image/") or "," not in image:
-        return image
-    header, encoded = image.split(",", 1)
-    try:
-        source = Image.open(io.BytesIO(base64.b64decode(encoded)))
-    except Exception:
-        return image
-    width, height = source.size
-    if width >= 2400 or height >= 1800:
-        return image
-    scale = min(2.0, 2400 / max(width, height))
-    if scale <= 1.05:
-        return image
-    enhanced = source.convert("RGB").resize(
-        (round(width * scale), round(height * scale)), Image.Resampling.LANCZOS
-    )
-    enhanced = ImageOps.autocontrast(enhanced, cutoff=1)
-    enhanced = ImageEnhance.Contrast(enhanced).enhance(1.12)
-    enhanced = ImageEnhance.Sharpness(enhanced).enhance(1.35)
-    output = io.BytesIO()
-    enhanced.save(output, format="PNG", optimize=True)
-    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
 
 
 def _build_generator_instructions(
