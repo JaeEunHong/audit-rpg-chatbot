@@ -16,12 +16,13 @@ if str(ROOT) not in sys.path:
 CORE_DIR = ROOT / "main" / "core"
 if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
-EXP_DIR = ROOT / "exp"
-if str(EXP_DIR) not in sys.path:
-    sys.path.insert(0, str(EXP_DIR))
-EXP_CORE_DIR = EXP_DIR / "core"
-if str(EXP_CORE_DIR) not in sys.path:
-    sys.path.insert(0, str(EXP_CORE_DIR))
+# The deployed app uses main/core. Do not put the legacy exp/core modules
+# ahead of it: both trees contain top-level module names such as audit_types.
+legacy_audit_types = sys.modules.get("audit_types")
+if legacy_audit_types is not None and str(ROOT / "exp" / "core") in str(
+    getattr(legacy_audit_types, "__file__", "")
+):
+    del sys.modules["audit_types"]
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -408,7 +409,7 @@ def available_teams() -> list[dict[str, str]]:
     ]
 
 
-@st.dialog("Before you begin")
+@st.dialog("Before you begin", dismissible=False)
 def render_intro_wizard() -> None:
     pages = [
         ("Who is Mikael?", "You are meeting Mikael von Geld, a senior credit manager with years of experience defending the portfolio and the decisions behind it. He knows the business, the relationships, and exactly how to make an uncomfortable question sound complicated."),
@@ -496,7 +497,7 @@ def render_home_page() -> None:
             select_page("demo" if demo_version else "chat")
 
 
-@st.fragment(run_every=10)
+@st.fragment(run_every=60)
 def render_facilitator_page(case_data: dict[str, Any]) -> None:
     try:
         teams = available_teams()

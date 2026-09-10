@@ -18,10 +18,9 @@ def leaderboard_summary(rows: list[dict[str, str]], case_data: dict[str, Any]) -
         team_id = row["team_id"]
         entry = grouped.setdefault(
             team_id,
-            {"team_id": team_id, "issue_types": set(), "contracts": set(), "score": 0.0},
+            {"team_id": team_id, "issue_types": set(), "contracts": set()},
         )
         entry["issue_types"].add(row["issue_type"])
-        entry["score"] += float(row.get("score_delta", 0) or 0)
         if row["record_type"] == "customer":
             entry["contracts"].update(contracts_by_customer.get(row["record_id"], set()))
         else:
@@ -31,13 +30,15 @@ def leaderboard_summary(rows: list[dict[str, str]], case_data: dict[str, Any]) -
             "team_id": entry["team_id"],
             "issue_types_found": len(entry["issue_types"]),
             "contracts_found": len(entry["contracts"]),
-            "score": entry["score"],
+            "score": len(entry["issue_types"]) * len(entry["contracts"]),
         }
         for entry in grouped.values()
     ]
 
 
 def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], case_data: dict[str, Any]) -> None:
+    st.subheader("🏆 Team Scoreboard")
+    st.caption("Score = issues found × contracts found")
     names = {team["team_id"]: team["team_name"] for team in teams}
     summary = leaderboard_summary(rows, case_data)
     summary_by_team = {item["team_id"]: item for item in summary}
@@ -60,13 +61,21 @@ def render_leaderboard(rows: list[dict[str, str]], teams: list[dict[str, str]], 
     st.dataframe(
         [
             {
+                "Rank": index,
                 "Team": item["team"],
-                "Issue types": item["issue_types_found"],
-                "Contracts": item["contracts_found"],
-                "Score": item["score"],
+                "Issues found": item["issue_types_found"],
+                "Contracts found": item["contracts_found"],
+                "Score": f"{item['issue_types_found']} × {item['contracts_found']} = {int(item['score'])}",
             }
-            for item in summary
+            for index, item in enumerate(summary, start=1)
         ],
         hide_index=True,
-        use_container_width=True,
+        column_config={
+            "Rank": st.column_config.NumberColumn(width="small"),
+            "Team": st.column_config.TextColumn(width="medium"),
+            "Issues found": st.column_config.NumberColumn(width="small"),
+            "Contracts found": st.column_config.NumberColumn(width="small"),
+            "Score": st.column_config.TextColumn(width="medium"),
+        },
+        width="stretch",
     )
