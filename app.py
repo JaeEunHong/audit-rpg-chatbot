@@ -300,11 +300,11 @@ MIKAEL_MOOD_IMAGES = {
         ASSET_DIR / "what_is_this.jpg",
     ),
     "Reluctant / Defeated": (
+        ASSET_DIR / "frustrated.jpg",
         ASSET_DIR / "tired.jpg",
         ASSET_DIR / "thinking.jpg",
     ),
     "Annoyed / Dismissive": (
-        ASSET_DIR / "frustrated.jpg",
         ASSET_DIR / "what_is_this.jpg",
     ),
     "Checking Records": (
