@@ -375,6 +375,8 @@ st.session_state.setdefault("idle_mood_label", None)
 st.session_state.setdefault("last_idle_message_at", 0.0)
 st.session_state.setdefault("special_mood_label", None)
 st.session_state.setdefault("pending_upload_review", False)
+if st.session_state.pop("pending_auth_navigation", False):
+    select_page("demo" if st.session_state.get("demo_mode") else "chat")
 
 def restore_score_ledger_from_messages() -> None:
     """Recover verified findings if Streamlit retained chat but lost the ledger."""
@@ -570,8 +572,10 @@ def render_home_page() -> None:
             st.session_state.intro_page = 0
             st.session_state.intro_complete = demo_version
             st.session_state.authenticated = True
+            st.session_state.demo_mode = demo_version
             _save_auth_cookie(demo_mode=demo_version)
-            select_page("demo" if demo_version else "chat")
+            st.session_state.pending_auth_navigation = True
+            st.rerun()
 
 
 @st.fragment(run_every=60)
