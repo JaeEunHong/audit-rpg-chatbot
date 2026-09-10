@@ -49,6 +49,17 @@ it in the schema's `issues` array and `issue`. If several concerns are
 explicitly stated, return all of them in `issues` and set `issue` to null.
 Do not silently choose one from several explicit concerns.
 
+First distinguish a new finding from a reaction to Mikael's previous answer.
+If the auditor is reacting to the immediately preceding explanation or
+acknowledgement — for example by saying that something is not great, that it
+violates policy, that this is a fair point, or otherwise challenging the
+explanation — treat it as a continuation of the active issue. Keep the active
+issue from context, set `request_type` to `continue`, and use `explain` (or
+the appropriate conversational follow-up action), not a new `assess`. Do not
+score the same records again merely because the auditor comments on the
+previous answer. Only use `assess` when the auditor asks to check or score
+records again or introduces a new record-level concern.
+
 Match the auditor's wording to the supplied concern names and short
 descriptions semantically; do not require the auditor to use an exact issue
 name or the same vocabulary. Treat concrete paraphrases, thresholds, policy
