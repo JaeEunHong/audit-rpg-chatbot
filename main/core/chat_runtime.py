@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps
 
 from conversation_state import ConversationState
 from audit_types import EvidencePackage
@@ -84,7 +84,7 @@ def _vision_call(image: str) -> str:
 
 
 def _prepare_visual_image(image: str) -> str:
-    """Improve only very small uploads before sending them to vision."""
+    """Improve screenshots whose visible text is small before sending them to vision."""
     if not image.startswith("data:image/") or "," not in image:
         return image
     header, encoded = image.split(",", 1)
@@ -93,13 +93,17 @@ def _prepare_visual_image(image: str) -> str:
     except Exception:
         return image
     width, height = source.size
-    if width >= 300 and height >= 18:
+    if width >= 2400 or height >= 1800:
+        return image
+    scale = min(2.0, 2400 / max(width, height))
+    if scale <= 1.05:
         return image
     enhanced = source.convert("RGB").resize(
-        (width * 4, height * 4), Image.Resampling.LANCZOS
+        (round(width * scale), round(height * scale)), Image.Resampling.LANCZOS
     )
-    enhanced = ImageEnhance.Contrast(enhanced).enhance(1.15)
-    enhanced = ImageEnhance.Sharpness(enhanced).enhance(1.4)
+    enhanced = ImageOps.autocontrast(enhanced, cutoff=1)
+    enhanced = ImageEnhance.Contrast(enhanced).enhance(1.12)
+    enhanced = ImageEnhance.Sharpness(enhanced).enhance(1.35)
     output = io.BytesIO()
     enhanced.save(output, format="PNG", optimize=True)
     return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
