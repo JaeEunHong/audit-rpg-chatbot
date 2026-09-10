@@ -358,6 +358,12 @@ MIKAEL_OPENING_MESSAGE = (
 )
 
 
+def opening_message() -> str:
+    participant_name = str(st.session_state.get("participant_name") or "").strip()
+    greeting = f"Good morning, {participant_name}.\n\n" if participant_name else ""
+    return greeting + MIKAEL_OPENING_MESSAGE
+
+
 def select_page(page: str) -> None:
     st.session_state.app_page = page
     st.rerun()
@@ -1664,7 +1670,7 @@ def render_chat_thread(messages: list[dict], pending: bool = False, record_work:
         with st.container(height=300):
             opening = {
                 "role": "assistant",
-                "content": MIKAEL_OPENING_MESSAGE,
+                "content": opening_message(),
                 "timestamp": time.strftime("%H:%M"),
             }
             st.markdown(
