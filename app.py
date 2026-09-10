@@ -348,6 +348,13 @@ MIKAEL_OPENING_MESSAGE = (
     "I'm fairly confident you won't find much to challenge here. "
     "There is a policy, people follow it closely, and this is a very tightly run ship. 😎"
 )
+
+
+def select_page(page: str) -> None:
+    st.session_state.app_page = page
+    st.rerun()
+
+
 st.session_state.setdefault("messages", [])
 st.session_state.setdefault("score_ledger", {})
 st.session_state.setdefault("conversation_state", ConversationState())
@@ -437,11 +444,6 @@ CUSTOMER_SCOPED_ISSUES = {
     "CUSTOMER IN TAX HAVEN",
     "CONNECTED CUSTOMER EXPOSURE HIDDEN BY SEPARATE CUSTOMER IDS",
 }
-
-
-def select_page(page: str) -> None:
-    st.session_state.app_page = page
-    st.rerun()
 
 
 DEFAULT_TEAMS = [
