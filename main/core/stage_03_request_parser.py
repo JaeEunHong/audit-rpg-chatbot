@@ -56,6 +56,18 @@ def extract_explicit_entities(text: str) -> list[dict[str, str]]:
     return entities
 
 
+def extract_identifier_like_tokens(text: str) -> list[str]:
+    """Find identifier-shaped tokens that Python must not silently ignore."""
+    tokens = []
+    seen = set()
+    for match in re.finditer(r"\b[A-Z]{2,6}\s*\d{4,}\b", str(text or ""), re.IGNORECASE):
+        token = re.sub(r"\s+", "", match.group(0)).upper()
+        if token not in seen:
+            tokens.append(token)
+            seen.add(token)
+    return tokens
+
+
 def parse_conversation_request(
     message: str,
     parser_call: Callable[..., str],
@@ -71,13 +83,19 @@ def parse_conversation_request(
     for entity in extract_explicit_entities(image_text or ""):
         if entity not in explicit_entities:
             explicit_entities.append(entity)
+    identifier_tokens = extract_identifier_like_tokens(message)
+    identifier_tokens.extend(extract_identifier_like_tokens(image_text or ""))
+    known_entity_ids = {item["id"] for item in explicit_entities}
+    unresolved_entity_mentions = []
+    for token in identifier_tokens:
+        if token not in known_entity_ids and token not in unresolved_entity_mentions:
+            unresolved_entity_mentions.append(token)
     entity_counts: dict[str, int] = {}
     for entity in explicit_entities:
         entity_type = entity["type"]
         entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1
     parser_payload = dict(
         current_message={"speaker": "auditor", "content": message},
-        explicit_entities=[],
         explicit_entity_summary={
             "counts": entity_counts,
             "sample": explicit_entities[:5],
@@ -89,45 +107,9 @@ def parse_conversation_request(
         image_text=image_text,
     )
     value = _parse_json_response(parser_call(**parser_payload), "llm1")
-    mentioned_entities = []
-    seen_entities: set[tuple[str, str]] = set()
-    raw_entities = value.get("entities")
-    if raw_entities is None:
-        raw_entities = value.get("mentioned_entities")
-    raw_entities = list(raw_entities or [])
-    existing_ids = {
-        normalize_compact_id(item.get("id") or "")
-        for item in raw_entities
-        if isinstance(item, dict)
-    }
-    for item in explicit_entities:
-        entity_id = item["id"]
-        if entity_id not in existing_ids:
-            raw_entities.append(item)
-            existing_ids.add(entity_id)
-    for item in raw_entities:
-        kind = str(item.get("type") or "").lower()
-        entity_id = normalize_compact_id(item.get("id") or "")
-        # ID prefixes are authoritative. This prevents an LLM entity-type
-        # mistake from sending an asset or VIN through the contract resolver.
-        if entity_id.startswith("CUST"):
-            kind = "customer"
-        elif entity_id.startswith("AST"):
-            kind = "asset"
-        elif entity_id.startswith("SE"):
-            kind = "contract"
-        elif len(entity_id) == 17 and re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", entity_id):
-            kind = "vin"
-        if kind == "customer":
-            entity_id = "CUST" + entity_id[4:].zfill(4) if entity_id.startswith("CUST") else entity_id
-        elif kind == "contract":
-            entity_id = "SE" + entity_id[2:] if entity_id.startswith("SE") else entity_id
-        elif kind == "asset":
-            entity_id = "AST" + entity_id[3:] if entity_id.startswith("AST") else entity_id
-        key = (kind, entity_id)
-        if kind and entity_id and key not in seen_entities:
-            mentioned_entities.append({"type": kind, "id": entity_id})
-            seen_entities.add(key)
+    # Entity resolution is deliberately owned by Python. LLM1 only classifies
+    # the concern and requested action; it must not emit entity-like fields.
+    mentioned_entities = explicit_entities
     concerns = []
     raw_concerns = value.get("requested_concerns")
     if raw_concerns is None:
@@ -142,16 +124,18 @@ def parse_conversation_request(
     if action is None:
         action = {"check": "assess", "unknown": None}.get(value.get("request"), value.get("request"))
     request_type = str(value.get("request_type") or "")
-    if not request_type and pending_request and not mentioned_entities and not value.get("references"):
+    if not request_type and pending_request and not mentioned_entities:
         request_type = "continue"
     parsed = {
         "request_type": request_type or "new",
         "mentioned_entities": mentioned_entities,
-        "references": list(value.get("references") or []),
-        "selection": value.get("selection"),
+        "unresolved_entity_mentions": unresolved_entity_mentions,
+        "references": [],
+        "selection": None,
         "requested_concerns": concerns,
         "requested_details": list(value.get("requested_details") or []),
         "requested_action": action,
+        "response_mode": str(value.get("response_mode") or "standard"),
         "filled_values": dict(value.get("filled_values") or {}),
         "needs_clarification": bool(value.get("needs_clarification")),
         "small_talk": value.get("request") == "small_talk",

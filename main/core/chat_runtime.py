@@ -43,29 +43,6 @@ class MikaelResponse(BaseModel):
     speech: str
 
 
-class ParserEntity(BaseModel):
-    type: Literal["customer", "contract", "asset", "vin"]
-    id: str
-
-
-class ParserSelection(BaseModel):
-    mode: Literal["first", "next"] | None = None
-    type: str | None = None
-    count: int | None = None
-
-
-class ParserReferenceSelection(BaseModel):
-    mode: Literal["one", "all", "first", "last"]
-    type: str
-    count: int | None = None
-
-
-class ParserReference(BaseModel):
-    text: str
-    source_message: int
-    selection: ParserReferenceSelection | None = None
-
-
 class ParserIssueCandidate(BaseModel):
     issue: str
     confidence: float
@@ -80,7 +57,7 @@ class ParserResponse(BaseModel):
     needs_issue_clarification: bool = False
     requested_action: Literal["overview", "lookup", "assess", "compare", "explain", "small_talk"] | None = None
     request_type: Literal["new", "continue"] = "new"
-    selection: ParserSelection | None = None
+    response_mode: Literal["standard", "broader_scope_follow_up"] = "standard"
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -90,14 +67,12 @@ PARSER_SCHEMA = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "entities": {"type": "array", "items": {"type": "object", "additionalProperties": False, "properties": {"type": {"type": "string", "enum": ["customer", "contract", "asset", "vin"]}, "id": {"type": "string"}}, "required": ["type", "id"]}},
-            "references": {"type": "array", "items": {"type": "object", "additionalProperties": False, "properties": {"text": {"type": "string"}, "source_message": {"type": "integer"}, "selection": {"type": ["object", "null"], "additionalProperties": False, "properties": {"mode": {"type": "string", "enum": ["one", "all", "first", "last"]}, "type": {"type": "string"}, "count": {"type": ["integer", "null"]}}, "required": ["mode", "type", "count"]}}, "required": ["text", "source_message", "selection"]}},
             "issues": {"type": "array", "items": {"type": "string"}},
             "issue": {"type": ["string", "null"]},
             "request": {"type": "string", "enum": ["overview", "lookup", "check", "compare", "explain", "small_talk", "unknown"]},
-            "selection": {"type": ["object", "null"], "additionalProperties": False, "properties": {"mode": {"type": "string", "enum": ["first", "next"]}, "type": {"type": "string", "enum": ["customer", "contract"]}, "count": {"type": "integer"}}, "required": ["mode", "type", "count"]},
+            "response_mode": {"type": "string", "enum": ["standard", "broader_scope_follow_up"]},
         },
-        "required": ["entities", "references", "issues", "issue", "request", "selection"],
+        "required": ["issues", "issue", "request", "response_mode"],
     },
 }
 
@@ -245,6 +220,13 @@ def _build_generator_instructions(
             "without mentioning audit fields, evidence, entities, or scoring."
         ),
     }.get(mode_key, "Answer the auditor directly using the supplied evidence.")
+    if evidence.get("response_mode") == "broader_scope_follow_up":
+        mode_instructions += (
+            " This is a broader-scope follow-up without a newly identified record. "
+            "Do not rescore the previous record or claim that the wider population "
+            "was checked. Answer cautiously about the possibility of additional "
+            "exceptions using only the supplied context."
+        )
     if tone == "embarrassed":
         tone_instruction = "Use an uncomfortable, caught-off-guard tone without becoming fully apologetic."
     elif tone in {"annoyed_confident", "annoyed_guarded"}:
@@ -475,6 +457,7 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
     data: dict[str, Any] = {
         "status": scoring.get("status") or result.get("status"),
         "action": action,
+        "response_mode": (result.get("request") or {}).get("response_mode", "standard"),
         "contract_count": len(contracts),
         "customer_count": len(customers),
         "entity_ids": entity_ids,

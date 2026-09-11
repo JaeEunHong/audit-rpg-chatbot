@@ -40,6 +40,12 @@ it in the schema's `issues` array and `issue`. If several concerns are
 explicitly stated, return all of them in `issues` and set `issue` to null.
 Do not silently choose one from several explicit concerns.
 
+Set `response_mode` to `broader_scope_follow_up` when the auditor asks about
+whether the active concern extends beyond the currently identified records,
+without identifying a new record to assess. This is a conversational scope
+question, not a request to rescore the active records. Use `standard` for all
+other requests.
+
 <!-- legacy reaction rule superseded by the semantic boundary above
 First distinguish a new finding from a reaction to Mikael's previous answer.
 If the auditor is reacting to the immediately preceding explanation or
@@ -89,10 +95,6 @@ If the auditor says that the contracts look problematic, strange, wrong, or
 similar but does not name a concern, set `issue` to null and `request` to
 `check`. Do not guess a concern from the graph or the concern catalog.
 
-If the auditor explicitly asks for a bounded batch, use `selection`. Support
-only `first N` and `next N` for customers or contracts. Do not create a
-selection when no batch was requested. Return `selection: null` otherwise.
-
 Choose `requested_action` using this priority:
 
 - `small_talk`: greeting, casual chat, or a message unrelated to the audit.
@@ -131,5 +133,5 @@ Return only this JSON object:
   "needs_issue_clarification": false,
   "requested_action": "overview|lookup|assess|compare|explain|small_talk|null",
   "request_type": "new|continue",
-  "selection": {"mode": "first|next", "type": "customer|contract", "count": 100}
+  "response_mode": "standard|broader_scope_follow_up"
 }

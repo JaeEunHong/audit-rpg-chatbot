@@ -231,8 +231,6 @@ def run_conversation_turn(
     if is_issue_continuation and pending_issues:
         parsed["requested_concerns"] = pending_issues
     request = merge_pending_request(state_memory.pending_confirmation, parsed)
-    if request.get("requested_concerns") and request.get("requested_action") in {"overview", "lookup"}:
-        request["requested_action"] = "assess"
     resolved_request = None
     message_key = normalize_key(message)
     name_matches = []
@@ -241,6 +239,29 @@ def run_conversation_turn(
         short_name = customer_name.removesuffix("_ab")
         if short_name and short_name in message_key:
             name_matches.append((len(short_name), customer_id))
+    has_new_scope = bool(parsed.get("mentioned_entities") or name_matches)
+    unresolved_entity_mentions = list(parsed.get("unresolved_entity_mentions") or [])
+    if unresolved_entity_mentions and not has_new_scope:
+        return {
+            "status": "not_found",
+            "state": "missing_entity",
+            "missing": ["entity"],
+            "clarification_type": "missing_entity",
+            "options": [],
+            "request": request,
+            "unresolved_entity_mentions": unresolved_entity_mentions,
+            "scoring": None,
+            "filtered_data": {},
+            "conversation_state": state_memory,
+        }
+    if (
+        request.get("requested_concerns")
+        and request.get("requested_action") in {"overview", "lookup"}
+        and has_new_scope
+    ):
+        request["requested_action"] = "assess"
+    if request.get("response_mode") == "broader_scope_follow_up" and not has_new_scope:
+        request["requested_action"] = "overview"
     current_points = [
         {"type": item.get("type"), "id": item.get("id")}
         for item in parsed.get("mentioned_entities", [])
@@ -249,6 +270,13 @@ def run_conversation_turn(
         {"type": "customer", "id": customer_id}
         for _, customer_id in sorted(name_matches, reverse=True)
     )
+    explicit_contract_points = [
+        point for point in current_points if point.get("type") == "contract"
+    ]
+    if explicit_contract_points:
+        # An explicit contract is the narrowest subject. Do not expand a
+        # simultaneously mentioned customer into all of its contracts.
+        current_points = explicit_contract_points
     if current_points:
         # A newly explicit entity starts a new scope; never merge it with the
         # previous conversational focus.
@@ -262,21 +290,28 @@ def run_conversation_turn(
     if not request["starting_points"]:
         request["starting_points"] = list(state_memory.focus_entities)
     canonical_points = []
+    seen_canonical_points: set[tuple[str, str]] = set()
     for point in request["starting_points"]:
         target = resolve_target(case_data, point.get("type", ""), point.get("id", ""))
         if target.get("status") != "resolved":
             continue
+        resolved_points = []
         if point.get("type") == "customer":
-            canonical_points.append({"type": "customer", "id": target["customer_id"]})
+            resolved_points = [{"type": "customer", "id": target["customer_id"]}]
         elif point.get("type") == "contract":
-            canonical_points.append({"type": "contract", "id": target["contract_id"]})
+            resolved_points = [{"type": "contract", "id": target["contract_id"]}]
         elif point.get("type") in {"asset", "vin"}:
-            canonical_points.extend(
+            resolved_points = [
                 {"type": "contract", "id": contract_id}
                 for contract_id in target.get("contract_ids", [])
-            )
+            ]
         else:
-            canonical_points.append(point)
+            resolved_points = [point]
+        for resolved_point in resolved_points:
+            key = (str(resolved_point.get("type")), str(resolved_point.get("id")))
+            if key not in seen_canonical_points:
+                canonical_points.append(resolved_point)
+                seen_canonical_points.add(key)
     if canonical_points:
         request["starting_points"] = canonical_points
     resolved_request = resolved_request_from_dict(request)
