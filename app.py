@@ -498,6 +498,7 @@ PARTICIPANT_NAMES = [
     "Veranika Tsikhanenka",
     "Wesley Zorzim",
 ]
+PARTICIPANT_NAMES = sorted(PARTICIPANT_NAMES, key=str.casefold)
 
 
 @st.cache_resource(show_spinner=False)
