@@ -1,4 +1,6 @@
 ﻿import base64
+import hashlib
+import hmac
 import html
 import io
 import importlib
@@ -185,11 +187,37 @@ def logout() -> None:
     st.session_state.app_page = "home"
     st.rerun()
 
-def require_app_password() -> None:
+def _facilitator_token() -> str:
+    issued_at = str(int(time.time()))
+    secret = os.getenv("APP_PASSWORD", "").encode("utf-8")
+    signature = hmac.new(
+        secret, f"facilitator:{issued_at}".encode(), hashlib.sha256
+    ).hexdigest()
+    return f"{issued_at}.{signature}"
+
+
+def _valid_facilitator_token(token: str | None) -> bool:
+    try:
+        issued_at, signature = str(token or "").split(".", 1)
+        if abs(time.time() - int(issued_at)) > 300:
+            return False
+    except (ValueError, TypeError):
+        return False
+    secret = os.getenv("APP_PASSWORD", "").encode("utf-8")
+    expected = hmac.new(
+        secret, f"facilitator:{issued_at}".encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
+def require_app_password(*, facilitator_token: str | None = None) -> None:
     expected = os.getenv("APP_PASSWORD", "")
     if not expected:
         st.error("APP_PASSWORD is not configured.")
         st.stop()
+    if _valid_facilitator_token(facilitator_token):
+        st.session_state.authenticated = True
+        st.session_state.facilitator_token_authenticated = True
     if st.session_state.get("authenticated", False):
         return
 
@@ -213,7 +241,10 @@ def require_app_password() -> None:
     st.stop()
 
 
-require_app_password()
+facilitator_view_requested = st.query_params.get("view") == "facilitator"
+require_app_password(
+    facilitator_token=st.query_params.get("token") if facilitator_view_requested else None
+)
 
 ASSET_DIR = ROOT / "assets"
 MIKAEL_DEFAULT_IMAGE = ASSET_DIR / "looks_good.jpg"
@@ -2321,7 +2352,7 @@ with st.sidebar:
         if st.button("Log out", key="settings_logout", type="secondary"):
             logout()
         st.markdown(
-            "<a href='?view=facilitator' target='_blank' "
+            f"<a href='?view=facilitator&token={_facilitator_token()}' target='_blank' "
             "style='display:block;text-align:center;padding:.45rem .75rem;"
             "border:1px solid rgba(49,51,63,.2);border-radius:.5rem;"
             "text-decoration:none;color:inherit;margin-top:.5rem;'>"
