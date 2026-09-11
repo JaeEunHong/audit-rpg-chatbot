@@ -330,7 +330,7 @@ def recent_activity_logs(limit: int = 100) -> list[dict[str, Any]]:
 def recent_login_logs(limit: int = 100) -> list[dict[str, Any]]:
     with snowflake_cursor() as cursor:
         cursor.execute(
-            """SELECT CONVERT_TIMEZONE('UTC', 'Europe/Stockholm', started_at),
+            """SELECT CONVERT_TIMEZONE('America/Los_Angeles', 'Europe/Stockholm', started_at),
             session_id, team_id, COALESCE(NULLIF(participant_name, ''), 'Unknown'),
             status FROM audit_sessions
             ORDER BY started_at DESC LIMIT %s""",
