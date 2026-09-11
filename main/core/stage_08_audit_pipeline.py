@@ -163,10 +163,41 @@ def run_conversation_turn(
         and str(item.get("issue") or "").strip()
         and str(item.get("description") or "").strip()
     ]
+    if len(candidates) >= 2:
+        confidence_total = sum(
+            max(0.0, float(item.get("confidence") or 0))
+            for item in candidates
+        )
+        if confidence_total:
+            candidates = [
+                {
+                    **item,
+                    "confidence": round(
+                        max(0.0, float(item.get("confidence") or 0))
+                        / confidence_total,
+                        3,
+                    ),
+                }
+                for item in candidates
+            ]
+            parsed["issue_candidates"] = candidates
     if len(candidates) == 1:
         parsed["requested_concerns"] = [str(candidates[0]["issue"]).strip().upper()]
         parsed["requested_action"] = parsed.get("requested_action") or "assess"
         parsed["needs_issue_clarification"] = False
+    elif len(candidates) >= 2:
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda item: float(item.get("confidence") or 0),
+            reverse=True,
+        )
+        top_confidence = float(ranked_candidates[0].get("confidence") or 0)
+        if top_confidence > 0.5:
+            parsed["requested_concerns"] = [
+                str(ranked_candidates[0]["issue"]).strip().upper()
+            ]
+            parsed["requested_action"] = parsed.get("requested_action") or "assess"
+            parsed["needs_issue_clarification"] = False
     if parsed.get("needs_issue_clarification") and len(candidates) >= 2:
         return {
             "status": "clarification",
