@@ -16,8 +16,6 @@ def ensure_team_table() -> None:
                 created_at TIMESTAMP_NTZ NOT NULL
             )"""
         )
-        with snowflake_cursor() as cursor:
-            cursor.execute("ALTER TABLE team ADD COLUMN IF NOT EXISTS team_group VARCHAR DEFAULT 'DATA'")
 
 
 def ensure_participant_table() -> None:
@@ -104,17 +102,19 @@ def save_teams(teams: list[dict[str, str]]) -> None:
             raise ValueError(f"Invalid team group: {group}")
         cleaned.append((str(row.get("team_id") or uuid.uuid4()), team_name, group))
     with snowflake_cursor() as cursor:
-        cursor.execute("UPDATE team SET team_group = COALESCE(team_group, 'DATA')")
         existing = {row[0] for row in cursor.execute("SELECT team_id FROM team").fetchall()}
         incoming = {row[0] for row in cleaned}
         for team_id, team_name, group in cleaned:
-            cursor.execute(
-                "MERGE INTO team target USING (SELECT %s AS team_id, %s AS team_name, %s AS team_group) source "
-                "ON target.team_id = source.team_id "
-                "WHEN MATCHED THEN UPDATE SET team_name = source.team_name, team_group = source.team_group "
-                "WHEN NOT MATCHED THEN INSERT (team_id, team_name, team_group, created_at) "
-                "VALUES (source.team_id, source.team_name, source.team_group, CURRENT_TIMESTAMP())",
-                (team_id, team_name, group),
-            )
+            if team_id in existing:
+                cursor.execute(
+                    "UPDATE team SET team_name = %s, team_group = %s WHERE team_id = %s",
+                    (team_name, group, team_id),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO team (team_id, team_name, team_group, created_at) "
+                    "VALUES (%s, %s, %s, CURRENT_TIMESTAMP())",
+                    (team_id, team_name, group),
+                )
         for team_id in existing - incoming:
             cursor.execute("DELETE FROM team WHERE team_id = %s", (team_id,))

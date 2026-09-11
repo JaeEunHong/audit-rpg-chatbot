@@ -108,7 +108,6 @@ def ensure_audit_tables() -> None:
 
 def seed_default_teams() -> None:
     with snowflake_cursor() as cursor:
-        cursor.execute("ALTER TABLE team ADD COLUMN IF NOT EXISTS team_group VARCHAR DEFAULT 'DATA'")
         for team_id, team_name in DEFAULT_TEAMS:
             cursor.execute(
                 """MERGE INTO team target USING (SELECT %s AS team_id, %s AS team_name, %s AS team_group)
@@ -313,13 +312,32 @@ def participant_score_rows() -> list[dict[str, Any]]:
 def recent_activity_logs(limit: int = 100) -> list[dict[str, Any]]:
     with snowflake_cursor() as cursor:
         cursor.execute(
-            """SELECT created_at, team_id, participant_id, speaker, message,
-            activity_json FROM team_chat_logs ORDER BY created_at DESC LIMIT %s""",
+            """SELECT l.created_at, l.team_id,
+            COALESCE(s.participant_name, l.participant_id), l.speaker,
+            l.message, l.activity_json
+            FROM team_chat_logs l
+            LEFT JOIN audit_sessions s ON s.session_id = l.session_id
+            ORDER BY l.created_at DESC LIMIT %s""",
             (limit,),
         )
         return [
-            {"created_at": row[0], "team_id": row[1], "participant_id": row[2],
+            {"created_at": row[0], "team_id": row[1], "participant_name": row[2],
              "speaker": row[3], "message": row[4], "activity": row[5]}
+            for row in cursor.fetchall()
+        ]
+
+
+def recent_login_logs(limit: int = 100) -> list[dict[str, Any]]:
+    with snowflake_cursor() as cursor:
+        cursor.execute(
+            """SELECT started_at, session_id, team_id, participant_id,
+            participant_name, status FROM audit_sessions
+            ORDER BY started_at DESC LIMIT %s""",
+            (limit,),
+        )
+        return [
+            {"started_at": row[0], "session_id": row[1], "team_id": row[2],
+             "participant_id": row[3], "participant_name": row[4], "status": row[5]}
             for row in cursor.fetchall()
         ]
 
@@ -327,14 +345,17 @@ def recent_activity_logs(limit: int = 100) -> list[dict[str, Any]]:
 def recent_error_logs(limit: int = 100) -> list[dict[str, Any]]:
     with snowflake_cursor() as cursor:
         cursor.execute(
-            """SELECT created_at, session_id, team_id, participant_id, error_type,
-            error_message, stage, retry_count FROM chat_error_logs
-            ORDER BY created_at DESC LIMIT %s""",
+            """SELECT e.created_at, e.session_id, e.team_id,
+            COALESCE(s.participant_name, e.participant_id), e.error_type,
+            e.error_message, e.stage, e.retry_count
+            FROM chat_error_logs e
+            LEFT JOIN audit_sessions s ON s.session_id = e.session_id
+            ORDER BY e.created_at DESC LIMIT %s""",
             (limit,),
         )
         return [
             {"created_at": row[0], "session_id": row[1], "team_id": row[2],
-             "participant_id": row[3], "error_type": row[4],
+             "participant_name": row[3], "error_type": row[4],
              "error_message": row[5], "stage": row[6], "retry_count": row[7]}
             for row in cursor.fetchall()
         ]

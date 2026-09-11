@@ -42,8 +42,8 @@ from app_support import DEFAULT_MODEL, extract_mood, image_to_data_url, intervie
 import chat_runtime
 from conversation_state import ConversationState
 from stage_08_audit_pipeline import _attitude_stage
-from db.team import create_team, list_participants, list_teams, save_participants, save_teams
-from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, recent_activity_logs, recent_error_logs, save_chat_error, seed_default_teams, save_turn_bundle
+from db.team import list_teams
+from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, recent_activity_logs, recent_error_logs, recent_login_logs, save_chat_error, seed_default_teams, save_turn_bundle
 from streamlit_related.components.leaderboard import render_leaderboard
 from streamlit_related.components.team_form import render_team_picker
 
@@ -241,7 +241,7 @@ def require_app_password(*, facilitator_token: str | None = None) -> None:
     st.stop()
 
 
-facilitator_view_requested = st.query_params.get("view") in {"facilitator", "team-management"}
+facilitator_view_requested = st.query_params.get("view") == "facilitator"
 require_app_password(
     facilitator_token=st.query_params.get("token") if facilitator_view_requested else None
 )
@@ -369,8 +369,6 @@ st.session_state.setdefault("pending_upload_review", False)
 # directly from Snowflake.
 if st.query_params.get("view") == "facilitator":
     st.session_state.app_page = "facilitator"
-elif st.query_params.get("view") == "team-management":
-    st.session_state.app_page = "team-management"
 
 if st.session_state.pop("pending_auth_navigation", False):
     select_page("demo" if st.session_state.get("demo_mode") else "chat")
@@ -526,12 +524,6 @@ def available_teams() -> list[dict[str, str]]:
 
 @st.cache_data(ttl=5, show_spinner=False)
 def available_participants() -> list[str]:
-    try:
-        names = list_participants()
-        if names:
-            return names
-    except Exception:
-        pass
     return PARTICIPANT_NAMES
 
 
@@ -570,11 +562,17 @@ def render_facilitator_logs() -> None:
     if st.button("Refresh logs", key="refresh_facilitator_logs"):
         st.rerun(scope="fragment")
     try:
+        logins = recent_login_logs()
         errors = recent_error_logs()
         activity = recent_activity_logs()
     except Exception as exc:
         st.error(f"Snowflake logs unavailable: {exc}")
         return
+    st.subheader("Recent logins")
+    if logins:
+        st.dataframe(pd.DataFrame(logins), hide_index=True, use_container_width=True)
+    else:
+        st.info("No logins recorded yet.")
     st.subheader("Errors")
     if errors:
         st.dataframe(pd.DataFrame(errors), hide_index=True, use_container_width=True)
@@ -742,6 +740,13 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
 
 
 def render_team_management_page() -> None:
+    def editor_rows(value: Any) -> list[dict[str, Any]]:
+        if hasattr(value, "to_dict"):
+            return value.to_dict("records")
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+        return []
+
     st.title("Manage teams")
     st.caption("Changes are saved to Snowflake and used by the participant picker and scoreboard.")
     default_rows = [
@@ -777,7 +782,7 @@ def render_team_management_page() -> None:
     with save_col:
         if st.button("Save team changes", type="primary", use_container_width=True):
             saved_teams = []
-            for row in edited_teams.to_dict("records"):
+            for row in editor_rows(edited_teams):
                 team_name = str(row.get("Team") or "").strip()
                 if not team_name:
                     continue
@@ -788,7 +793,7 @@ def render_team_management_page() -> None:
                 })
             saved_participants = [
                 {"Name": str(row.get("Name") or "").strip()}
-                for row in edited_participants.to_dict("records")
+                for row in editor_rows(edited_participants)
                 if str(row.get("Name") or "").strip()
             ]
             try:
@@ -2476,15 +2481,6 @@ with st.sidebar:
             "Open Facilitator View</a>",
             unsafe_allow_html=True,
         )
-        if st.session_state.app_page == "facilitator":
-            st.markdown(
-                f"<a href='?view=team-management&token={_facilitator_token()}' "
-                "style='display:block;text-align:center;padding:.45rem .75rem;"
-                "border:1px solid rgba(49,51,63,.2);border-radius:.5rem;"
-                "text-decoration:none;color:inherit;margin-top:.5rem;'>"
-                "Manage Teams (local preview)</a>",
-                unsafe_allow_html=True,
-            )
         if st.session_state.app_page == "demo":
             st.session_state.show_activity = st.checkbox(
                 "Show activity details",
@@ -2496,8 +2492,6 @@ if st.session_state.app_page == "home":
     render_home_page()
 elif st.session_state.app_page == "facilitator":
     render_facilitator_page(case_data)
-elif st.query_params.get("view") == "team-management":
-    render_team_management_page()
 elif st.session_state.app_page == "demo":
     render_demo_page(case_data)
 else:
