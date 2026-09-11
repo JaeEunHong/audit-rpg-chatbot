@@ -636,6 +636,7 @@ def render_home_page() -> None:
             st.session_state.participant_id = st.session_state.get("participant_id") or str(__import__("uuid").uuid4())
             st.session_state.session_id = str(__import__("uuid").uuid4())
             st.session_state.score_ledger = {}
+            st.session_state.show_activity = False
             try:
                 create_session(
                     session_id=st.session_state.session_id,
