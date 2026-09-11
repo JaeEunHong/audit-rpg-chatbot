@@ -709,7 +709,12 @@ def render_demo_page(case_data: dict[str, Any]) -> None:
         st.rerun()
     rows = leaderboard_rows()
     with st.expander("🏆 Team scoreboard", expanded=False):
-        render_leaderboard(rows, teams, case_data, display_groups=True)
+        render_leaderboard(
+            rows,
+            teams,
+            case_data,
+            visible_team_names={"Data X", "Paper X", "AI X"},
+        )
         st.markdown("### Average score per person")
         try:
             participant_rows = participant_score_rows()

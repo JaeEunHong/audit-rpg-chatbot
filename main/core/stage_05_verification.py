@@ -35,6 +35,8 @@ def check_filtered_request(
             "clarification_type": "choose_concern",
             "options": available_concerns or [],
         }
+    if requested_action == "explain":
+        return {"status": "ready_for_scoring", "state": "ready_for_scoring", "missing": [], "clarification_type": None, "options": []}
     if requested_action == "assess":
         return {"status": "ready_for_scoring", "state": "ready_for_scoring", "missing": [], "clarification_type": None, "options": []}
     return {"status": "ready_for_lookup", "state": "lookup", "missing": [], "clarification_type": None, "options": []}

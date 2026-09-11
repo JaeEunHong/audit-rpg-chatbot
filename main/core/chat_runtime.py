@@ -188,12 +188,14 @@ def _build_generator_instructions(
     mode_instructions = {
         "new_score": (
             "This is a newly discovered confirmed finding. Make the discovery "
-            "reaction unmistakable before stating the finding: start with a "
-            "natural startled pause, brief exclamation, or surprised self-correction, "
-            "as if Mikael did not know or had forgotten it. Do not begin with "
-            "Okay, Yes, Right, or a calm confirmation. Then acknowledge the "
-            "finding and use the supplied explanation naturally without turning "
-            "it into a polished report."
+            "reaction unmistakable before stating the finding. The FIRST WORDS "
+            "must show that Mikael is surprised to discover or remember this, "
+            "for example: 'Oh... wait, really?', 'Uh... I had forgotten that', "
+            "or 'Oh no... that is not what I expected to see.' Then acknowledge "
+            "the finding and use the supplied explanation naturally without "
+            "turning it into a polished report. Do not begin with Okay, Yes, "
+            "Right, Well, or a calm confirmation. Do not sound as if Mikael "
+            "already knew the finding was present."
         ),
         "partial_confirmed": (
             "A substantial part of the group is confirmed, but not every record. "

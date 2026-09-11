@@ -43,6 +43,7 @@ def render_leaderboard(
     case_data: dict[str, Any],
     *,
     display_groups: bool = False,
+    visible_team_names: set[str] | None = None,
 ) -> None:
     st.subheader("🏆 Team Scoreboard")
     names = {team["team_id"]: team["team_name"] for team in teams}
@@ -69,7 +70,7 @@ def render_leaderboard(
     for item in summary:
         item["team"] = names.get(item["team_id"], item["team_id"])
     if not display_groups:
-        visible_teams = {f"Team {index}" for index in range(1, 9)}
+        visible_teams = visible_team_names or {f"Team {index}" for index in range(1, 9)}
         summary = [item for item in summary if item["team"] in visible_teams]
     summary.sort(key=lambda item: (-item["score"], item["team"]))
     table_rows = "".join(
