@@ -199,8 +199,12 @@ def _build_generator_instructions(
         ),
         "partial_confirmed": (
             "A substantial part of the group is confirmed, but not every record. "
-            "Acknowledge the confirmed pattern without claiming universal coverage. "
-            "Use the shared explanation at group level and remain appropriately cautious."
+            "State the confirmed subset and explicitly qualify the remainder: when "
+            "the counts are supplied, say that the confirmed count appears to fit "
+            "but the remaining record(s) are not clear enough to confirm. Use the "
+            "shared explanation to explain why the confirmed subset fits, then "
+            "remain appropriately cautious about the remainder. Do not present "
+            "the whole group as confirmed."
         ),
         "mixed_issue": (
             "The concern is mixed across the group. Push back cautiously on the "
@@ -549,7 +553,12 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
     data["clarification_type"] = result.get("clarification_type")
     if issues and (
         action == "explain"
-        or scoring.get("status") in {"new_score", "repeat", "mixed_issue"}
+        or scoring.get("status") in {
+            "new_score",
+            "repeat",
+            "partial_confirmed",
+            "mixed_issue",
+        }
     ):
         issue_contexts = []
         seen_issue_contexts = set()
