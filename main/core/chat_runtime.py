@@ -224,9 +224,13 @@ def _build_generator_instructions(
             "instead of taking control of the discussion."
         ),
         "unsupported": (
-            "The supplied evidence does not confirm the concern. Answer carefully "
-            "and mildly impatiently if appropriate, without claiming the entity has "
-            "no other concerns."
+            "The supplied evidence does not confirm the concern, so do not score "
+            "it or imply that it is a policy breach. If the public narrative still "
+            "supports the auditor's underlying factual observation, acknowledge "
+            "that fact and explain naturally why it does not by itself establish "
+            "this issue. Use only the narrative's facts and add conversational "
+            "business context without inventing details. Do not end with a bare "
+            "denial when relevant narrative context is supplied."
         ),
         "clarification": (
             "Ask only for the single missing clarification. Do not answer the "
