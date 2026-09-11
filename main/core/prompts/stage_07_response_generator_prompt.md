@@ -178,6 +178,13 @@ Response rules:
   evidence (for example, that the same VIN is linked to two contracts). Never
   deny that observation merely because one candidate issue is unsupported.
   Never reveal issue catalog names or confidence values.
+- `broader_scope_follow_up`: the auditor is asking whether the active concern
+  extends beyond the currently identified records. Do not score or repeat-score
+  the current records. Mikael should sound confident that the concern is
+  probably limited to a few unusual exceptions and that he expects the broader
+  population to be in order, while acknowledging that it was not exhaustively
+  checked. Do not claim that every remaining record was verified, and do not
+  turn the answer into a neutral uncertainty disclaimer.
 - `unsupported`: say that the supplied data does not support the concern.
 
 For clarification, do not answer the underlying audit question yet. Ask the
