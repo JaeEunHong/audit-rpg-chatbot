@@ -5,7 +5,13 @@ from typing import Any
 
 from audit_types import SelectedData
 
-from stage_01_case_data import contract_id_from_record, contracts_for_customer, normalize_compact_id, normalize_key
+from stage_01_case_data import (
+    contract_id_from_record,
+    contracts_for_customer,
+    normalize_compact_id,
+    normalize_key,
+    normalize_name_key,
+)
 
 
 def _relationship_index(case_data: dict[str, Any], name: str) -> dict[str, list[str]]:
@@ -84,11 +90,11 @@ def resolve_target(case_data: dict[str, Any], kind: str, value: str) -> dict[str
             "record": case_data["customers"][value],
         }
     if kind == "customer" and raw_value:
-        needle = normalize_key(raw_value)
+        needle = normalize_name_key(raw_value)
         matches = [
             customer_id
             for customer_id, record in case_data.get("customers", {}).items()
-            if needle and needle in normalize_key(record.get("customer_name", ""))
+            if needle and needle in normalize_name_key(record.get("customer_name", ""))
         ]
         if len(matches) == 1:
             return resolve_target(case_data, "customer", matches[0])

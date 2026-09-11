@@ -6,7 +6,7 @@ import re
 from copy import deepcopy
 from typing import Any, Callable
 
-from audit_types import AuditRequest, ResolvedRequest
+from audit_types import ResolvedRequest
 from stage_01_case_data import normalize_compact_id
 
 
@@ -32,6 +32,7 @@ def resolved_request_from_dict(request: dict[str, Any]) -> ResolvedRequest:
         action=request.get("requested_action"),
         concerns=list(request.get("requested_concerns") or []),
         issue_candidates=list(request.get("issue_candidates") or []),
+        scope_intent=request.get("scope_intent") or "unspecified_related_records",
         selection=request.get("selection"),
         continuation=request.get("request_type") == "continue",
         clarification=(request.get("missing") or [None])[0],
@@ -140,6 +141,7 @@ def parse_conversation_request(
         "needs_clarification": bool(value.get("needs_clarification")),
         "small_talk": value.get("request") == "small_talk",
         "issue_candidates": list(value.get("issue_candidates") or []),
+        "scope_intent": str(value.get("scope_intent") or "unspecified_related_records"),
         "needs_issue_clarification": bool(value.get("needs_issue_clarification")),
     }
     if parsed["request_type"] == "continue":
@@ -175,33 +177,3 @@ def merge_pending_request(
     ]
     merged["needs_clarification"] = bool(merged.get("missing"))
     return merged
-
-
-def parse_request(message: str, parser_call: Callable[..., str], **context: Any) -> AuditRequest:
-    value = _parse_json_response(parser_call(message=message, **context), "llm1")
-    return AuditRequest(
-        entity_mentions=list(value.get("entity_mentions") or []),
-        requested_access=value.get("requested_access"),
-        requested_content=value.get("requested_content"),
-        issue_claims=list(value.get("issue_claims") or []),
-        follow_active_context=bool(value.get("follow_active_context")),
-        small_talk=bool(value.get("small_talk")),
-        context_action=str(value.get("context_action") or "follow"),
-    )
-
-
-def parse_request_with_review(
-    message: str,
-    parser_call: Callable[..., str],
-    review_call: Callable[..., str] | None = None,
-    **context: Any,
-) -> AuditRequest:
-    request = parse_request(message, parser_call, **context)
-    needs_review = (
-        review_call is not None
-        and request.requested_content in {"explanation", "policy"}
-        and (not request.entity_mentions or not request.issue_claims)
-    )
-    if needs_review:
-        request = parse_request(message, review_call, draft=request.__dict__, **context)
-    return request

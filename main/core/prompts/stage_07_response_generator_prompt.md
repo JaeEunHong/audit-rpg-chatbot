@@ -167,8 +167,10 @@ Response rules:
   Sound as if Mikael checked the group and is pushing back on the auditor's
   assumption: "Hmm... I checked the group, but are you sure this applies to
   all of them? I'm not convinced the AML concern is clear across the board."
-  Do not reveal which ones matched and do not score the group yet. Ask for a
-  specific customer or contract only if the auditor wants to pursue one.
+  Do not explain the issue, reveal which records matched, or reveal counts.
+  Keep this to one or two sentences and ask for a specific customer or
+  contract only if the auditor wants to pursue one. Never describe the whole
+  group as having the issue.
 - `partial_confirmed`: acknowledge the confirmed subset and explicitly qualify
   the remainder. When the supplied result contains counts, say that the
   confirmed records appear to fit but the remaining record(s) are not clear

@@ -46,6 +46,22 @@ without identifying a new record to assess. This is a conversational scope
 question, not a request to rescore the active records. Use `standard` for all
 other requests.
 
+Classify `scope_intent` from the auditor's wording and the explicit entity
+summary. Use exactly one value:
+
+- `explicit_single_record`: one explicitly identified record is being discussed.
+- `explicit_record_group`: multiple explicit record IDs are being discussed as
+  a group.
+- `all_related_contracts`: the auditor explicitly asks about all contracts
+  related to a named customer or relationship (for example, "all their
+  contracts" or "other contracts with this issue").
+- `unspecified_related_records`: the auditor names a customer or uses a broad
+  reference without saying whether one record or all related records are meant.
+
+This is only a scope-intent classification. Do not resolve names, choose
+contracts, or infer graph relationships. Python performs entity resolution and
+decides whether clarification is required.
+
 <!-- legacy reaction rule superseded by the semantic boundary above
 First distinguish a new finding from a reaction to Mikael's previous answer.
 If the auditor is reacting to the immediately preceding explanation or
@@ -133,5 +149,6 @@ Return only this JSON object:
   "needs_issue_clarification": false,
   "requested_action": "overview|lookup|assess|compare|explain|small_talk|null",
   "request_type": "new|continue",
-  "response_mode": "standard|broader_scope_follow_up"
+  "response_mode": "standard|broader_scope_follow_up",
+  "scope_intent": "explicit_single_record|explicit_record_group|all_related_contracts|unspecified_related_records"
 }

@@ -58,6 +58,12 @@ class ParserResponse(BaseModel):
     requested_action: Literal["overview", "lookup", "assess", "compare", "explain", "small_talk"] | None = None
     request_type: Literal["new", "continue"] = "new"
     response_mode: Literal["standard", "broader_scope_follow_up"] = "standard"
+    scope_intent: Literal[
+        "explicit_single_record",
+        "explicit_record_group",
+        "all_related_contracts",
+        "unspecified_related_records",
+    ] = "unspecified_related_records"
 
 PARSER_SCHEMA = {
     "type": "json_schema",
@@ -71,8 +77,14 @@ PARSER_SCHEMA = {
             "issue": {"type": ["string", "null"]},
             "request": {"type": "string", "enum": ["overview", "lookup", "check", "compare", "explain", "small_talk", "unknown"]},
             "response_mode": {"type": "string", "enum": ["standard", "broader_scope_follow_up"]},
+            "scope_intent": {"type": "string", "enum": [
+                "explicit_single_record",
+                "explicit_record_group",
+                "all_related_contracts",
+                "unspecified_related_records",
+            ]},
         },
-        "required": ["issues", "issue", "request", "response_mode"],
+        "required": ["issues", "issue", "request", "response_mode", "scope_intent"],
     },
 }
 
@@ -182,9 +194,13 @@ def _build_generator_instructions(
             "the whole group as confirmed."
         ),
         "mixed_issue": (
-            "The concern is mixed across the group. Push back cautiously on the "
-            "assumption that it applies to everyone. Do not score the unsupported "
-            "members or reveal hidden member counts."
+            "The concern is mixed across the group and must be handled as a "
+            "clarification, not an explanation. Reply in one or two sentences: "
+            "say that the concern does not clearly apply to the whole group and "
+            "ask the auditor to name a specific contract if they want to pursue "
+            "it. Do not explain the issue, cite evidence, describe any member, "
+            "or reveal confirmed/unsupported counts. Do not say that every "
+            "record has the issue."
         ),
         "repeat": (
             "This concern was already covered. Sound mildly impatient or tired, "
@@ -556,6 +572,16 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
             "finding_sample": findings[:3] if action == "explain" or not group_request else [],
             "findings_by_status": finding_groups if action == "explain" or not group_request else None,
             "group_result": "mixed" if mixed_findings else "confirmed" if all_findings_confirmed else "unsupported",
+            "confirmed_record_ids": [
+                item.get("contract_id") or item.get("customer_id")
+                for item in findings
+                if item.get("status") in {"new_score", "repeat"}
+            ],
+            "unsupported_record_ids": [
+                item.get("contract_id") or item.get("customer_id")
+                for item in findings
+                if item.get("status") == "unsupported"
+            ],
         }
     if entity_ids:
         narrative_entities = [
@@ -699,6 +725,14 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
             generator_evidence = {
                 "status": result.get("status"),
                 "response_mode": "broader_scope_follow_up",
+            }
+        elif generator_evidence.get("status") == "mixed_issue":
+            # Mixed scoring is a clarification, not an explanation. Do not
+            # expose per-record findings to LLM2, otherwise it may explain an
+            # unsupported record as if it were confirmed.
+            generator_evidence = {
+                "status": "clarification",
+                "clarification_type": "mixed_issue",
             }
     reply_context = {
         "latest_auditor_message": message,

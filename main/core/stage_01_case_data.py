@@ -58,6 +58,14 @@ def normalize_key(value: str) -> str:
     return re.sub(r"_+", "_", text)
 
 
+def normalize_name_key(value: str) -> str:
+    """Normalize human names across accents and replacement-character mojibake."""
+    import unicodedata
+    text = unicodedata.normalize("NFKD", str(value or "")).replace("�", "o")
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return normalize_key(text)
+
+
 def concern_level(issue: str) -> str:
     return "customer" if normalize_key(issue) in CUSTOMER_LEVEL_ISSUES else "contract"
 

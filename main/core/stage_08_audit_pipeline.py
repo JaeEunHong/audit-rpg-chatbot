@@ -4,21 +4,19 @@ from copy import deepcopy
 from dataclasses import asdict
 from typing import Any, Callable
 
-from audit_types import AuditRequest
 from audit_types import DecisionResult
 from stage_03_request_parser import (
     merge_pending_request,
     parse_conversation_request,
     resolved_request_from_dict,
 )
-from stage_01_case_data import normalize_key
+from stage_01_case_data import concern_level, normalize_key, normalize_name_key
 from stage_04_entity_resolution import (
     expand_conversation_references,
     filter_related_data,
     resolve_target,
     selected_data_from_filtered,
 )
-from stage_05_verification import verify_request
 from stage_05_verification import check_filtered_request
 from stage_06_scoring import score_entities
 from conversation_state import ConversationState
@@ -232,16 +230,18 @@ def run_conversation_turn(
         parsed["requested_concerns"] = pending_issues
     request = merge_pending_request(state_memory.pending_confirmation, parsed)
     resolved_request = None
-    message_key = normalize_key(message)
+    message_key = normalize_name_key(message)
     name_matches = []
     for customer_id, record in case_data.get("customers", {}).items():
-        customer_name = normalize_key(record.get("customer_name", ""))
+        customer_name = normalize_name_key(record.get("customer_name", ""))
         short_name = customer_name.removesuffix("_ab")
         if short_name and short_name in message_key:
             name_matches.append((len(short_name), customer_id))
     has_new_scope = bool(parsed.get("mentioned_entities") or name_matches)
     unresolved_entity_mentions = list(parsed.get("unresolved_entity_mentions") or [])
-    if unresolved_entity_mentions and not has_new_scope:
+    # An identifier-shaped token is a new scope signal even when it cannot be
+    # resolved. Never silently fall back to the previous record in that case.
+    if unresolved_entity_mentions:
         return {
             "status": "not_found",
             "state": "missing_entity",
@@ -314,7 +314,53 @@ def run_conversation_turn(
                 seen_canonical_points.add(key)
     if canonical_points:
         request["starting_points"] = canonical_points
+    scope_intent = request.get("scope_intent", "unspecified_related_records")
+    contract_scope_issues = [
+        issue for issue in request.get("requested_concerns", [])
+        if concern_level(issue) == "contract"
+    ]
+    if scope_intent == "all_related_contracts" and contract_scope_issues:
+        materialized_contracts = []
+        for point in request.get("starting_points", []):
+            if point.get("type") != "customer":
+                materialized_contracts.append(point)
+                continue
+            target = resolve_target(case_data, "customer", point.get("id", ""))
+            materialized_contracts.extend(
+                {"type": "contract", "id": contract_id}
+                for contract_id in target.get("contract_ids", [])
+            )
+        request["starting_points"] = list({
+            (point["type"], point["id"]): point
+            for point in materialized_contracts
+        }.values())
     resolved_request = resolved_request_from_dict(request)
+    customer_points = [
+        point for point in request.get("starting_points", [])
+        if point.get("type") == "customer"
+    ]
+    if (
+        scope_intent == "unspecified_related_records"
+        and contract_scope_issues
+        and customer_points
+        and not any(point.get("type") == "contract" for point in request.get("starting_points", []))
+    ):
+        contract_options = []
+        for point in customer_points:
+            target = resolve_target(case_data, "customer", point.get("id", ""))
+            contract_options.extend(target.get("contract_ids", []))
+        return {
+            "status": "clarification",
+            "state": "ambiguous_scope",
+            "clarification_type": "choose_contract_scope",
+            "missing": ["contract_scope"],
+            "options": list(dict.fromkeys(contract_options)),
+            "request": request,
+            "resolved_request": resolved_request,
+            "scoring": None,
+            "filtered_data": {},
+            "conversation_state": state_memory,
+        }
     selection = request.get("selection")
     if selection:
         mode = str(selection.get("mode") or "")
@@ -474,7 +520,8 @@ def run_conversation_turn(
             unsupported_count = sum(
                 item.get("status") == "unsupported" for item in findings
             )
-            if confirmed_count >= unsupported_count:
+            # A confirmed majority is required; a 50/50 split is ambiguous.
+            if confirmed_count > (confirmed_count + unsupported_count) / 2:
                 scoring = dict(tentative_scoring)
                 scoring["status"] = "partial_confirmed"
                 scoring["score_delta"] = sum(
@@ -541,24 +588,3 @@ def run_conversation_turn(
         "selected_data": asdict(selected_data),
         "conversation_state": state_memory,
     }
-
-
-def run_audit_pipeline(
-    request: AuditRequest,
-    case_data: dict[str, Any],
-    ledger: dict[str, Any],
-    *,
-    visual_extractor: Callable[..., Any] | None = None,
-    parser: Callable[..., AuditRequest] | None = None,
-    parser_review: Callable[..., AuditRequest] | None = None,
-    generator: Callable[..., str] | None = None,
-    image: Any = None,
-) -> dict[str, Any]:
-    if image is not None and visual_extractor is not None:
-        visual_extractor(image)
-    if parser is not None:
-        request = parser(request, parser_review)
-    result = verify_request(request, case_data, ledger)
-    if generator is not None:
-        result["reply"] = generator(result)
-    return result

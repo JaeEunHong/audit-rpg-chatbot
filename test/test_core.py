@@ -16,7 +16,8 @@ def test_main_core_imports_and_prompts():
 
     assert (CORE / "prompts" / "stage_03_request_parser_prompt.md").exists()
     assert (CORE / "prompts" / "stage_07_response_generator_prompt.md").exists()
-    assert hasattr(audit_types, "AuditRequest")
+    assert hasattr(audit_types, "ResolvedRequest")
+    assert hasattr(audit_types, "EvidencePackage")
     assert hasattr(conversation_state, "ConversationState")
     assert hasattr(stage_01_case_data, "load_case_data")
     assert hasattr(stage_03_request_parser, "parse_conversation_request")
