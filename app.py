@@ -43,7 +43,14 @@ import chat_runtime
 from conversation_state import ConversationState
 from stage_08_audit_pipeline import _attitude_stage
 from db.team import list_teams
-from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, recent_activity_logs, recent_error_logs, recent_login_logs, save_chat_error, seed_default_teams, save_turn_bundle
+from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, recent_activity_logs, recent_error_logs, save_chat_error, seed_default_teams, save_turn_bundle
+
+try:
+    from db.audit import recent_login_logs
+except ImportError:
+    # Allows an older Streamlit Cloud module cache to boot during deployment.
+    def recent_login_logs(limit: int = 100) -> list[dict[str, Any]]:
+        return []
 from streamlit_related.components.leaderboard import render_leaderboard
 from streamlit_related.components.team_form import render_team_picker
 
