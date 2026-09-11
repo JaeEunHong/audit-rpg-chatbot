@@ -332,6 +332,13 @@ st.session_state.setdefault("idle_mood_label", None)
 st.session_state.setdefault("last_idle_message_at", 0.0)
 st.session_state.setdefault("special_mood_label", None)
 st.session_state.setdefault("pending_upload_review", False)
+
+# Open the facilitator scoreboard in a separate browser tab without changing
+# the participant chat tab. The new Streamlit session reads the scoreboard
+# directly from Snowflake.
+if st.query_params.get("view") == "facilitator":
+    st.session_state.app_page = "facilitator"
+
 if st.session_state.pop("pending_auth_navigation", False):
     select_page("demo" if st.session_state.get("demo_mode") else "chat")
 
@@ -2313,8 +2320,14 @@ with st.sidebar:
     with st.expander("Settings", expanded=False):
         if st.button("Log out", key="settings_logout", type="secondary"):
             logout()
-        if st.button("Open Facilitator View", key="settings_facilitator_view", type="secondary"):
-            select_page("facilitator")
+        st.markdown(
+            "<a href='?view=facilitator' target='_blank' "
+            "style='display:block;text-align:center;padding:.45rem .75rem;"
+            "border:1px solid rgba(49,51,63,.2);border-radius:.5rem;"
+            "text-decoration:none;color:inherit;margin-top:.5rem;'>"
+            "Open Facilitator View</a>",
+            unsafe_allow_html=True,
+        )
         if st.session_state.app_page == "demo":
             st.session_state.show_activity = st.checkbox(
                 "Show activity details",
