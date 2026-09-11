@@ -227,6 +227,46 @@ def _build_generator_instructions(
             "was checked. Answer cautiously about the possibility of additional "
             "exceptions using only the supplied context."
         )
+    # Mode-specific instructions must come after the generic generator prompt:
+    # generic confirmed-finding examples must not leak into unsupported replies.
+    final_mode_override = {
+        "unsupported": (
+            "FINAL MODE OVERRIDE — unsupported finding: the concern is not "
+            "confirmed. Do not describe it as a breach, exception, violation, "
+            "or something the organisation accepted at the time. Do not invent "
+            "historical handling, motives, business pressure, review practices, "
+            "or excuses. Use only neutral public facts that help answer the "
+            "question. Do not repeat or validate the auditor's alleged defect "
+            "when that would make the unsupported issue sound partly confirmed. "
+            "Make clear—with self-assured, mildly arrogant Mikael confidence—"
+            "that the auditor is overreading the record and that it does not "
+            "establish this issue. Never turn 'thin', 'unusual', or 'not detailed' "
+            "into a second confirmation. Never use confirmed "
+            "wording such as 'we let it through', 'it wasn't treated as a breach', "
+            "or 'we gave it too much weight'. Do not say what the organisation "
+            "addressed, accepted, relied on, or failed to address historically. "
+            "Keep the correction conversational and slightly fluffy, not like a "
+            "refusal or help-desk answer."
+        ),
+        "broader_scope_follow_up": (
+            "FINAL MODE OVERRIDE — broader-scope follow-up: do not rescore or "
+            "re-explain the current record. Say that the concern appears limited "
+            "to unusual exceptions and that you expect most of the wider group "
+            "to be in order, while being honest that it was not exhaustively "
+            "checked. Do not claim organisation-wide practices, system reliance, "
+            "or facts about records not present in the supplied context."
+        ),
+        "not_found": (
+            "FINAL MODE OVERRIDE — not found: discuss only the unresolved "
+            "identifier. Do not reuse facts, names, issues, or explanations from "
+            "the previous turn. Do not sound like a helpful assistant giving "
+            "generic instructions. Sound like Mikael: mildly irritated, puzzled, "
+            "and matter-of-factly say that the identifier is not showing up here, "
+            "then ask the auditor to check what they meant."
+        ),
+    }.get(mode_key)
+    if final_mode_override:
+        mode_instructions += f" {final_mode_override}"
     if tone == "embarrassed":
         tone_instruction = "Use an uncomfortable, caught-off-guard tone without becoming fully apologetic."
     elif tone in {"annoyed_confident", "annoyed_guarded"}:
