@@ -229,6 +229,11 @@ def _build_generator_instructions(
         )
     # Mode-specific instructions must come after the generic generator prompt:
     # generic confirmed-finding examples must not leak into unsupported replies.
+    final_override_key = (
+        "broader_scope_follow_up"
+        if evidence.get("response_mode") == "broader_scope_follow_up"
+        else mode_key
+    )
     final_mode_override = {
         "unsupported": (
             "FINAL MODE OVERRIDE — unsupported finding: the concern is not "
@@ -250,11 +255,14 @@ def _build_generator_instructions(
         ),
         "broader_scope_follow_up": (
             "FINAL MODE OVERRIDE — broader-scope follow-up: do not rescore or "
-            "re-explain the current record. Say that the concern appears limited "
-            "to unusual exceptions and that you expect most of the wider group "
-            "to be in order, while being honest that it was not exhaustively "
-            "checked. Do not claim organisation-wide practices, system reliance, "
-            "or facts about records not present in the supplied context."
+            "re-explain the current record, quote counts, or list records. Say "
+            "that the concern appears limited to unusual exceptions and that you "
+            "expect most of the wider group to be in order, while being honest "
+            "that it was not exhaustively checked. Do not claim that the team "
+            "treated cases as exceptions, relied on relationships, failed to "
+            "enforce a rule, or followed any organisation-wide practice. Do not "
+            "use explanations from the active finding to answer this wider-scope "
+            "question."
         ),
         "not_found": (
             "FINAL MODE OVERRIDE — not found: discuss only the unresolved "
@@ -264,7 +272,7 @@ def _build_generator_instructions(
             "and matter-of-factly say that the identifier is not showing up here, "
             "then ask the auditor to check what they meant."
         ),
-    }.get(mode_key)
+    }.get(final_override_key)
     if final_mode_override:
         mode_instructions += f" {final_mode_override}"
     if tone == "embarrassed":
@@ -684,6 +692,14 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
             generator_evidence.pop("narrative_sample", None)
         else:
             generator_evidence["narrative_sample"] = list(generator_evidence.get("narrative_sample", []))[:6]
+        if generator_evidence.get("response_mode") == "broader_scope_follow_up":
+            # A scope probe is a conversational portfolio-level response, not
+            # an evidence explanation. Do not let record samples or counts
+            # make LLM2 repeat the current group or invent historical context.
+            generator_evidence = {
+                "status": result.get("status"),
+                "response_mode": "broader_scope_follow_up",
+            }
     reply_context = {
         "latest_auditor_message": message,
         "evidence": generator_evidence,

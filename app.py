@@ -241,7 +241,7 @@ def require_app_password(*, facilitator_token: str | None = None) -> None:
     st.stop()
 
 
-facilitator_view_requested = st.query_params.get("view") == "facilitator"
+facilitator_view_requested = st.query_params.get("view") in {"facilitator", "team-management"}
 require_app_password(
     facilitator_token=st.query_params.get("token") if facilitator_view_requested else None
 )
@@ -369,6 +369,8 @@ st.session_state.setdefault("pending_upload_review", False)
 # directly from Snowflake.
 if st.query_params.get("view") == "facilitator":
     st.session_state.app_page = "facilitator"
+elif st.query_params.get("view") == "team-management":
+    st.session_state.app_page = "team-management"
 
 if st.session_state.pop("pending_auth_navigation", False):
     select_page("demo" if st.session_state.get("demo_mode") else "chat")
@@ -696,6 +698,68 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
     if st.button("Back to scoreboard", key="final_back_to_scoreboard"):
         st.session_state.facilitator_ended = False
         st.rerun()
+
+
+def render_team_management_page() -> None:
+    st.title("Manage teams")
+    st.caption("Local preview only — changes are kept in this browser session.")
+    default_rows = [
+        {"Team ID": team["team_id"], "Team": team["team_name"], "Group": team.get("group", "DATA")}
+        for team in available_teams()
+    ]
+    team_rows = st.session_state.setdefault("team_management_rows", default_rows)
+    edited_teams = st.data_editor(
+        team_rows,
+        key="team_management_editor",
+        num_rows="dynamic",
+        hide_index=True,
+        column_config={
+            "Team ID": st.column_config.TextColumn(disabled=True),
+            "Team": st.column_config.TextColumn(required=True),
+            "Group": st.column_config.SelectboxColumn(options=["DATA", "PAPER", "AI"], required=True),
+        },
+        use_container_width=True,
+    )
+    participant_rows = st.session_state.setdefault(
+        "participant_management_rows",
+        [{"Name": name} for name in PARTICIPANT_NAMES],
+    )
+    st.subheader("Participants")
+    edited_participants = st.data_editor(
+        participant_rows,
+        key="participant_management_editor",
+        num_rows="dynamic",
+        hide_index=True,
+        column_config={
+            "Name": st.column_config.TextColumn(required=True),
+        },
+        use_container_width=True,
+    )
+    save_col, reset_col = st.columns(2)
+    with save_col:
+        if st.button("Save local changes", type="primary", use_container_width=True):
+            saved_teams = []
+            for row in edited_teams.to_dict("records"):
+                team_name = str(row.get("Team") or "").strip()
+                if not team_name:
+                    continue
+                saved_teams.append({
+                    "Team ID": str(row.get("Team ID") or __import__("uuid").uuid4()),
+                    "Team": team_name,
+                    "Group": row.get("Group") or "DATA",
+                })
+            saved_participants = [
+                {"Name": str(row.get("Name") or "").strip()}
+                for row in edited_participants.to_dict("records")
+                if str(row.get("Name") or "").strip()
+            ]
+            st.session_state.team_management_rows = saved_teams
+            st.session_state.participant_management_rows = saved_participants
+            st.success("Local changes saved for this preview session.")
+    with reset_col:
+        if st.button("Back to facilitator", use_container_width=True):
+            st.session_state.app_page = "facilitator"
+            st.rerun()
 
 
 def render_participant_page() -> None:
@@ -2360,6 +2424,15 @@ with st.sidebar:
             "Open Facilitator View</a>",
             unsafe_allow_html=True,
         )
+        if st.session_state.app_page == "facilitator":
+            st.markdown(
+                f"<a href='?view=team-management&token={_facilitator_token()}' "
+                "style='display:block;text-align:center;padding:.45rem .75rem;"
+                "border:1px solid rgba(49,51,63,.2);border-radius:.5rem;"
+                "text-decoration:none;color:inherit;margin-top:.5rem;'>"
+                "Manage Teams (local preview)</a>",
+                unsafe_allow_html=True,
+            )
         if st.session_state.app_page == "demo":
             st.session_state.show_activity = st.checkbox(
                 "Show activity details",
@@ -2371,6 +2444,8 @@ if st.session_state.app_page == "home":
     render_home_page()
 elif st.session_state.app_page == "facilitator":
     render_facilitator_page(case_data)
+elif st.query_params.get("view") == "team-management":
+    render_team_management_page()
 elif st.session_state.app_page == "demo":
     render_demo_page(case_data)
 else:
