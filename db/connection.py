@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -40,9 +41,17 @@ def _snowflake_connection():
         raise RuntimeError("Snowflake configuration is missing: " + ", ".join(missing))
     kwargs.setdefault("login_timeout", 10)
     kwargs.setdefault("network_timeout", 10)
-    connection = snowflake.connector.connect(**kwargs)
-    _connection_state.connection = connection
-    return connection
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            connection = snowflake.connector.connect(**kwargs)
+            _connection_state.connection = connection
+            return connection
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.5 * (2 ** attempt))
+    raise RuntimeError("Snowflake connection failed after 3 attempts.") from last_error
 
 
 @contextmanager

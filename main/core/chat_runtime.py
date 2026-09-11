@@ -193,8 +193,8 @@ def _build_generator_instructions(
             "remain appropriately cautious about the remainder. Do not present "
             "the whole group as confirmed."
         ),
-        "mixed_issue": (
-            "The concern is mixed across the group and must be handled as a "
+        "partial_scope": (
+            "Only part of the requested group is confirmed and this must be handled as a "
             "clarification, not an explanation. Reply in one or two sentences: "
             "say that the concern does not clearly apply to the whole group and "
             "ask the auditor to name a specific contract if they want to pursue "
@@ -266,8 +266,12 @@ def _build_generator_instructions(
             "wording such as 'we let it through', 'it wasn't treated as a breach', "
             "or 'we gave it too much weight'. Do not say what the organisation "
             "addressed, accepted, relied on, or failed to address historically. "
-            "Keep the correction conversational and slightly fluffy, not like a "
-            "refusal or help-desk answer."
+            "Lead with a firm conversational correction such as 'No, that is "
+            "not what these records show' or 'That is being read rather more "
+            "dramatically than the data warrants.' Then explain the public facts "
+            "that make the concern look ordinary or justified. Keep the tone "
+            "self-assured and slightly condescending, not like a refusal or "
+            "help-desk answer."
         ),
         "broader_scope_follow_up": (
             "FINAL MODE OVERRIDE — broader-scope follow-up: do not rescore or "
@@ -412,7 +416,7 @@ def _response_policy(result: dict[str, Any], evidence: dict[str, Any]) -> dict[s
     )
     if first_confirmed:
         tone = "embarrassed"
-    elif status == "mixed_issue" or result.get("state") == "mixed_issue":
+    elif result.get("state") == "partial_scope":
         tone = "annoyed_guarded"
     elif status == "partial_confirmed":
         tone = "guarded"
@@ -622,7 +626,7 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
             "new_score",
             "repeat",
             "partial_confirmed",
-            "mixed_issue",
+            "partial_confirmed",
         }
     ):
         issue_contexts = []
@@ -657,6 +661,7 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
         confirmed_count=int(decision.get("confirmed_count") or 0),
         unsupported_count=int(decision.get("unsupported_count") or 0),
         score_delta=int(decision.get("score_delta") or 0),
+        score_eligible=bool(decision.get("score_eligible", False)),
         entity_samples=entity_ids[:10],
         public_narrative_samples=data.get("narrative_sample", []),
         secret_narrative_samples=data.get("issues", []),
@@ -726,13 +731,20 @@ def run_chat_turn(message: str, graph: dict[str, Any], state: ConversationState,
                 "status": result.get("status"),
                 "response_mode": "broader_scope_follow_up",
             }
-        elif generator_evidence.get("status") == "mixed_issue":
+        elif result.get("clarification_type") == "partial_scope":
             # Mixed scoring is a clarification, not an explanation. Do not
             # expose per-record findings to LLM2, otherwise it may explain an
             # unsupported record as if it were confirmed.
             generator_evidence = {
                 "status": "clarification",
-                "clarification_type": "mixed_issue",
+                "clarification_type": "partial_scope",
+            }
+        elif result.get("clarification_type") == "ambiguous_issue":
+            # Candidate issues are internal routing metadata. Keep them in the
+            # activity result, but never expose them as suggestions to Mikael.
+            generator_evidence = {
+                "status": "clarification",
+                "clarification_type": "ambiguous_issue",
             }
     reply_context = {
         "latest_auditor_message": message,

@@ -202,7 +202,7 @@ def filter_related_data(
 
 
 def selected_data_from_filtered(filtered: dict[str, Any]) -> SelectedData:
-    """Create the Phase B value object without rewriting the legacy shape."""
+    """Create the selected-data value object from filtered graph data."""
     return SelectedData(
         customers=list(filtered.get("customers") or []),
         contracts=list(filtered.get("contracts") or []),

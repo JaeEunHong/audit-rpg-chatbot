@@ -42,8 +42,8 @@ from app_support import DEFAULT_MODEL, extract_mood, image_to_data_url, intervie
 import chat_runtime
 from conversation_state import ConversationState
 from stage_08_audit_pipeline import _attitude_stage
-from db.team import create_team
-from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, save_chat_error, seed_default_teams, save_turn_bundle
+from db.team import create_team, list_participants, list_teams, save_participants, save_teams
+from db.audit import TEAM_GROUPS, create_session, ensure_audit_tables, leaderboard_rows, load_team_score_ledger, participant_score_rows, recent_activity_logs, recent_error_logs, save_chat_error, seed_default_teams, save_turn_bundle
 from streamlit_related.components.leaderboard import render_leaderboard
 from streamlit_related.components.team_form import render_team_picker
 
@@ -515,10 +515,24 @@ def initialize_audit_storage(cache_version: str = "teams-v3") -> bool:
 
 @st.cache_data(ttl=5, show_spinner=False)
 def available_teams() -> list[dict[str, str]]:
-    return [
-        {"team_id": team_id, "team_name": name, "group": TEAM_GROUPS.get(team_id, "DATA")}
-        for team_id, name in DEFAULT_TEAMS
-    ]
+    try:
+        return list_teams()
+    except Exception:
+        return [
+            {"team_id": team_id, "team_name": name, "group": TEAM_GROUPS.get(team_id, "DATA")}
+            for team_id, name in DEFAULT_TEAMS
+        ]
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def available_participants() -> list[str]:
+    try:
+        names = list_participants()
+        if names:
+            return names
+    except Exception:
+        pass
+    return PARTICIPANT_NAMES
 
 
 @st.dialog("Before you begin", dismissible=False)
@@ -552,6 +566,27 @@ def render_intro_wizard() -> None:
             st.rerun()
 
 
+def render_facilitator_logs() -> None:
+    if st.button("Refresh logs", key="refresh_facilitator_logs"):
+        st.rerun(scope="fragment")
+    try:
+        errors = recent_error_logs()
+        activity = recent_activity_logs()
+    except Exception as exc:
+        st.error(f"Snowflake logs unavailable: {exc}")
+        return
+    st.subheader("Errors")
+    if errors:
+        st.dataframe(pd.DataFrame(errors), hide_index=True, use_container_width=True)
+    else:
+        st.success("No errors recorded.")
+    st.subheader("Recent activity")
+    if activity:
+        st.dataframe(pd.DataFrame(activity), hide_index=True, use_container_width=True)
+    else:
+        st.info("No activity recorded yet.")
+
+
 def render_home_page() -> None:
     teams = available_teams()
     st.markdown(
@@ -581,7 +616,7 @@ def render_home_page() -> None:
         else:
             participant_name = st.selectbox(
                 "Your name",
-                [""] + PARTICIPANT_NAMES,
+                [""] + available_participants(),
                 format_func=lambda name: "Select your name" if not name else name,
                 key="participant_name_select",
                 label_visibility="collapsed",
@@ -603,8 +638,10 @@ def render_home_page() -> None:
                     participant_id=st.session_state.participant_id,
                     participant_name=st.session_state.participant_name,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.exception("Failed to create Snowflake audit session")
+                st.error("Could not start the review session because Snowflake storage is unavailable. Please try again.")
+                st.stop()
             st.session_state.intro_page = 0
             st.session_state.intro_complete = demo_version
             st.session_state.authenticated = True
@@ -623,7 +660,11 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
         rows = []
         st.caption(f"Snowflake scoreboard unavailable; showing an empty preview. ({exc})")
     if not st.session_state.facilitator_ended:
-        render_leaderboard(rows, teams, case_data)
+        scoreboard_tab, logs_tab = st.tabs(["Scoreboard", "Live logs"])
+        with scoreboard_tab:
+            render_leaderboard(rows, teams, case_data)
+        with logs_tab:
+            render_facilitator_logs()
         st.markdown(
             "<style>[data-testid='stButton'] button {font-size: 16px; padding: 0.55rem 1rem;}</style>",
             unsafe_allow_html=True,
@@ -702,12 +743,12 @@ def render_facilitator_page(case_data: dict[str, Any]) -> None:
 
 def render_team_management_page() -> None:
     st.title("Manage teams")
-    st.caption("Local preview only — changes are kept in this browser session.")
+    st.caption("Changes are saved to Snowflake and used by the participant picker and scoreboard.")
     default_rows = [
         {"Team ID": team["team_id"], "Team": team["team_name"], "Group": team.get("group", "DATA")}
         for team in available_teams()
     ]
-    team_rows = st.session_state.setdefault("team_management_rows", default_rows)
+    team_rows = default_rows
     edited_teams = st.data_editor(
         team_rows,
         key="team_management_editor",
@@ -720,10 +761,7 @@ def render_team_management_page() -> None:
         },
         use_container_width=True,
     )
-    participant_rows = st.session_state.setdefault(
-        "participant_management_rows",
-        [{"Name": name} for name in PARTICIPANT_NAMES],
-    )
+    participant_rows = [{"Name": name} for name in available_participants()]
     st.subheader("Participants")
     edited_participants = st.data_editor(
         participant_rows,
@@ -737,7 +775,7 @@ def render_team_management_page() -> None:
     )
     save_col, reset_col = st.columns(2)
     with save_col:
-        if st.button("Save local changes", type="primary", use_container_width=True):
+        if st.button("Save team changes", type="primary", use_container_width=True):
             saved_teams = []
             for row in edited_teams.to_dict("records"):
                 team_name = str(row.get("Team") or "").strip()
@@ -753,9 +791,17 @@ def render_team_management_page() -> None:
                 for row in edited_participants.to_dict("records")
                 if str(row.get("Name") or "").strip()
             ]
-            st.session_state.team_management_rows = saved_teams
-            st.session_state.participant_management_rows = saved_participants
-            st.success("Local changes saved for this preview session.")
+            try:
+                save_teams([
+                    {"team_id": row["Team ID"], "team_name": row["Team"], "group": row["Group"]}
+                    for row in saved_teams
+                ])
+                available_teams.clear()
+                save_participants([row["Name"] for row in saved_participants])
+                available_participants.clear()
+                st.success("Team and participant changes saved to Snowflake.")
+            except Exception as exc:
+                st.error(f"Team changes could not be saved: {exc}")
     with reset_col:
         if st.button("Back to facilitator", use_container_width=True):
             st.session_state.app_page = "facilitator"
@@ -807,8 +853,9 @@ def render_demo_page(case_data: dict[str, Any]) -> None:
                 participant_id=st.session_state.participant_id,
                 participant_name=st.session_state.participant_name,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.exception("Failed to persist audit turn to Snowflake")
+            raise RuntimeError("Snowflake turn persistence failed; the turn was not saved.") from exc
         st.rerun()
     rows = leaderboard_rows()
     with st.expander("🏆 Team scoreboard", expanded=False):
@@ -2310,7 +2357,12 @@ def render_audit_page() -> None:
                     )
                 except Exception:
                     logging.exception("Failed to save chat runtime error")
-                reply = "[MOOD:Guarded / Hesitant]\nSorry, I didn’t catch that. Could you say it again?"
+                persistence_failed = "Snowflake turn persistence failed" in str(exc)
+                if persistence_failed:
+                    st.warning("This turn could not be saved to Snowflake. Please try sending it again.")
+                    reply = "[MOOD:Guarded / Hesitant]\nI couldn't save that turn properly. Could you send it again?"
+                else:
+                    reply = "[MOOD:Guarded / Hesitant]\nSorry, I didn’t catch that. Could you say it again?"
                 events = [{
                     "tool": "runtime_error",
                     "output": {

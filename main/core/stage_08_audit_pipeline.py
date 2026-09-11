@@ -23,7 +23,7 @@ from conversation_state import ConversationState
 
 
 def decision_result_from_scoring(scoring: dict[str, Any] | None) -> DecisionResult:
-    """Create the Phase C value object from the legacy scoring result."""
+    """Create the Phase C value object from the scoring result."""
     scoring = scoring or {}
     findings = list(scoring.get("findings") or [])
     return DecisionResult(
@@ -37,6 +37,7 @@ def decision_result_from_scoring(scoring: dict[str, Any] | None) -> DecisionResu
             item.get("status") == "unsupported" for item in findings
         ),
         repeat_count=sum(item.get("status") == "repeat" for item in findings),
+        score_eligible=bool(scoring.get("score_eligible", False)),
     )
 
 
@@ -521,9 +522,11 @@ def run_conversation_turn(
                 item.get("status") == "unsupported" for item in findings
             )
             # A confirmed majority is required; a 50/50 split is ambiguous.
-            if confirmed_count > (confirmed_count + unsupported_count) / 2:
-                scoring = dict(tentative_scoring)
-                scoring["status"] = "partial_confirmed"
+            score_eligible = confirmed_count > (confirmed_count + unsupported_count) / 2
+            scoring = dict(tentative_scoring)
+            scoring["status"] = "partial_confirmed"
+            scoring["score_eligible"] = score_eligible
+            if score_eligible:
                 scoring["score_delta"] = sum(
                     item.get("status") == "new_score" for item in findings
                 )
@@ -531,16 +534,13 @@ def run_conversation_turn(
                     ledger.clear()
                     ledger.update(scoring_ledger)
             else:
-                scoring = {
-                    "status": "mixed_issue",
-                    "score_delta": 0,
-                    "findings": findings,
-                }
+                # A clarification must never report or apply a score delta.
+                scoring["score_delta"] = 0
                 state = {
                     "status": "clarification",
-                    "state": "mixed_issue",
+                    "state": "partial_scope",
                     "missing": ["specific_entity"],
-                    "clarification_type": "mixed_issue",
+                    "clarification_type": "partial_scope",
                     "options": [],
                 }
         else:

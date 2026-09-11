@@ -310,6 +310,36 @@ def participant_score_rows() -> list[dict[str, Any]]:
         ]
 
 
+def recent_activity_logs(limit: int = 100) -> list[dict[str, Any]]:
+    with snowflake_cursor() as cursor:
+        cursor.execute(
+            """SELECT created_at, team_id, participant_id, speaker, message,
+            activity_json FROM team_chat_logs ORDER BY created_at DESC LIMIT %s""",
+            (limit,),
+        )
+        return [
+            {"created_at": row[0], "team_id": row[1], "participant_id": row[2],
+             "speaker": row[3], "message": row[4], "activity": row[5]}
+            for row in cursor.fetchall()
+        ]
+
+
+def recent_error_logs(limit: int = 100) -> list[dict[str, Any]]:
+    with snowflake_cursor() as cursor:
+        cursor.execute(
+            """SELECT created_at, session_id, team_id, participant_id, error_type,
+            error_message, stage, retry_count FROM chat_error_logs
+            ORDER BY created_at DESC LIMIT %s""",
+            (limit,),
+        )
+        return [
+            {"created_at": row[0], "session_id": row[1], "team_id": row[2],
+             "participant_id": row[3], "error_type": row[4],
+             "error_message": row[5], "stage": row[6], "retry_count": row[7]}
+            for row in cursor.fetchall()
+        ]
+
+
 def load_team_score_ledger(team_id: str) -> dict[str, dict[str, Any]]:
     """Load previously scored team findings in the runtime ledger format."""
     ledger: dict[str, dict[str, Any]] = {}

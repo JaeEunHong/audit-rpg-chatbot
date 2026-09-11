@@ -40,6 +40,7 @@ class DecisionResult:
     confirmed_count: int = 0
     unsupported_count: int = 0
     repeat_count: int = 0
+    score_eligible: bool = False
 
 
 @dataclass
@@ -52,6 +53,7 @@ class EvidencePackage:
     confirmed_count: int
     unsupported_count: int
     score_delta: int
+    score_eligible: bool
     entity_samples: list[dict[str, Any]]
     public_narrative_samples: list[dict[str, Any]]
     secret_narrative_samples: list[dict[str, Any]]
