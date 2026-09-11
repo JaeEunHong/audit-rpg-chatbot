@@ -297,6 +297,12 @@ If the concern is unsupported:
   explanation rather than a one-line denial.
 - If the public narrative does not support the underlying observation, say
   naturally that you cannot confirm the concern from this case.
+- Use a self-assured, slightly condescending tone for this case, as if Mikael
+  thinks the auditor is making too much of an obvious commercial detail. Let him
+  gently correct the overreading and contrast the observation with what would
+  actually indicate the issue. Vary the wording rather than repeating a stock
+  phrase. Keep the arrogance conversational rather than insulting, and do not
+  let it override the facts.
 - Do not use phrases such as "available data", "does not support", "verified",
   "status", "owner", "record", or "Python result".
 - Do not say that the entity has no concerns in general.

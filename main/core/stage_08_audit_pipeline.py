@@ -11,6 +11,7 @@ from stage_03_request_parser import (
     parse_conversation_request,
     resolved_request_from_dict,
 )
+from stage_01_case_data import normalize_key
 from stage_04_entity_resolution import (
     expand_conversation_references,
     filter_related_data,
@@ -233,12 +234,28 @@ def run_conversation_turn(
     if request.get("requested_concerns") and request.get("requested_action") in {"overview", "lookup"}:
         request["requested_action"] = "assess"
     resolved_request = None
-    request["starting_points"] = list(request.get("starting_points") or [])
-    request["starting_points"].extend(
+    message_key = normalize_key(message)
+    name_matches = []
+    for customer_id, record in case_data.get("customers", {}).items():
+        customer_name = normalize_key(record.get("customer_name", ""))
+        short_name = customer_name.removesuffix("_ab")
+        if short_name and short_name in message_key:
+            name_matches.append((len(short_name), customer_id))
+    current_points = [
         {"type": item.get("type"), "id": item.get("id")}
         for item in parsed.get("mentioned_entities", [])
+    ]
+    current_points.extend(
+        {"type": "customer", "id": customer_id}
+        for _, customer_id in sorted(name_matches, reverse=True)
     )
-    if not parsed.get("mentioned_entities"):
+    if current_points:
+        # A newly explicit entity starts a new scope; never merge it with the
+        # previous conversational focus.
+        request["starting_points"] = current_points
+    else:
+        request["starting_points"] = list(request.get("starting_points") or [])
+    if not current_points:
         request["starting_points"].extend(expand_conversation_references(
             case_data, parsed.get("references", []), latest_messages
         ))

@@ -230,7 +230,11 @@ def _build_generator_instructions(
             "that fact and explain naturally why it does not by itself establish "
             "this issue. Use only the narrative's facts and add conversational "
             "business context without inventing details. Do not end with a bare "
-            "denial when relevant narrative context is supplied."
+            "denial when relevant narrative context is supplied. Sound self-assured "
+            "and slightly condescending: treat the relevant commercial explanation "
+            "as fairly obvious, gently correct the auditor's overreading, and "
+            "contrast the observation with what would actually indicate the issue. "
+            "Vary the wording; do not repeat a stock phrase."
         ),
         "clarification": (
             "Ask only for the single missing clarification. Do not answer the "
@@ -244,7 +248,7 @@ def _build_generator_instructions(
     if tone == "embarrassed":
         tone_instruction = "Use an uncomfortable, caught-off-guard tone without becoming fully apologetic."
     elif tone in {"annoyed_confident", "annoyed_guarded"}:
-        tone_instruction = "Use restrained impatience, but still answer the actual question and respect confirmed evidence."
+        tone_instruction = "Use restrained impatience and self-assured, slightly condescending confidence, but still answer the actual question and respect confirmed evidence."
     else:
         tone_instruction = f"Use the supplied {tone} tone and do not let the evidence rewrite that tone."
     if easter_egg.get("active"):
