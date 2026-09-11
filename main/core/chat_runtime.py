@@ -518,7 +518,7 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
             "findings_by_status": finding_groups if action == "explain" or not group_request else None,
             "group_result": "mixed" if mixed_findings else "confirmed" if all_findings_confirmed else "unsupported",
         }
-    if len(entity_ids) > 100:
+    if entity_ids:
         narrative_entities = [
             ("customer", customer_id, graph.get("customers", {}).get(customer_id, {}))
             for customer_id in customers
@@ -532,10 +532,10 @@ def _evidence(result: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any] |
                 "id": entity_id,
                 "public_narrative": str(record.get("public_description") or ""),
             }
-            for entity_type, entity_id, record in narrative_entities[:10]
+            for entity_type, entity_id, record in narrative_entities[:5]
             if record.get("public_description")
         ]
-        data["narrative_sample_is_partial"] = True
+        data["narrative_sample_is_partial"] = len(narrative_entities) > 5
     data["requested_issue"] = (result.get("request") or {}).get("requested_concerns", [])
     data["response_policy"] = _response_policy(result, data)
     presentation = _easter_egg_presentation(result, filtered, scoring, graph)
